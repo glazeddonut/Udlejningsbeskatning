@@ -2,7 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { kr } from './format.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter,
-  personOpgoerelse, resolveFordeling, effektivBeloeb, udlejningsdage, antalMaaneder,
+  personOpgoerelse, resolveFordeling, effektivBeloeb, udlejningsdage,
 } from './beregning.js'
 
 const A4 = [595.28, 841.89]
@@ -58,7 +58,7 @@ export async function genererRegnskabPdf({ year, saet, grundlag, persons, proper
   const ejendom = `${property?.navn || 'Ejendom'}${property?.adresse ? ', ' + property.adresse : ''}`
   text(ejendom, MARGIN, y, 10, font, MUTED); y -= 14
   text('Ejere: ' + persons.map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' - '), MARGIN, y, 10, font, MUTED); y -= 14
-  text(`Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} - naertstaaende: ${saet.naertstaaende ? 'ja' : 'nej'} - ${antalMaaneder(saet)} mdr / ${udlejningsdage(saet)} udlejningsdage`, MARGIN, y, 10, font, MUTED); y -= 8
+  text(`Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} - naertstaaende: ${saet.naertstaaende ? 'ja' : 'nej'} - ${udlejningsdage(saet)} udlejningsdage`, MARGIN, y, 10, font, MUTED); y -= 8
   hline(y); y -= 4
 
   // ── Indtaegter ──

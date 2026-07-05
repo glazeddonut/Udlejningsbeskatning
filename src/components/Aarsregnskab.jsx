@@ -5,7 +5,7 @@ import { normaliserSaet } from '../lib/saet.js'
 import { genererRegnskabPdf } from '../lib/pdf.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter, personOpgoerelse, resolveFordeling,
-  effektivBeloeb, udlejningsdage, antalMaaneder,
+  effektivBeloeb, udlejningsdage,
 } from '../lib/beregning.js'
 
 const INDTAEGT_RAEKKER = [
@@ -106,7 +106,7 @@ function Regnskab({ saet, year, grundlag, persons, property, loans, settings }) 
         <div className="rg-meta">
           {property?.navn || 'Ejendom'}{property?.adresse ? `, ${property.adresse}` : ''}<br />
           Ejere: {persons.map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' · ')}<br />
-          Grundlag: {grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} · Udlejet til nærtstående: {saet.naertstaaende ? 'ja' : 'nej'} · {antalMaaneder(saet)} mdr / {udlejningsdage(saet)} udlejningsdage
+          Grundlag: {grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} · Udlejet til nærtstående: {saet.naertstaaende ? 'ja' : 'nej'} · {udlejningsdage(saet)} udlejningsdage
         </div>
       </div>
 

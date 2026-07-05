@@ -67,14 +67,34 @@ export function udlejningsdage(saet) {
   return antalMaaneder(saet) * 30
 }
 
+// Forholdsmæssige måneder til pro rata (dansk lejeret): summen af aktive dage / dage i
+// hver berørt måned. Delmåneder tæller forholdsmæssigt (fx 5.–31. aug = 27/31). Datobaseret;
+// falder tilbage til hele måneder (antalMaaneder) hvis datoer mangler.
+export function prorataMaaneder(saet) {
+  const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
+  if (!f || !t || t < f) return antalMaaneder(saet)
+  let sum = 0
+  let y = f.getFullYear(), m = f.getMonth()
+  const endY = t.getFullYear(), endM = t.getMonth()
+  while (y < endY || (y === endY && m <= endM)) {
+    const dageIMaaned = new Date(y, m + 1, 0).getDate()
+    const mStart = new Date(y, m, 1), mEnd = new Date(y, m, dageIMaaned)
+    const aStart = f > mStart ? f : mStart
+    const aEnd = t < mEnd ? t : mEnd
+    sum += (Math.round((aEnd - aStart) / 86400000) + 1) / dageIMaaned
+    m++; if (m > 11) { m = 0; y++ }
+  }
+  return sum
+}
+
 export function erProrata(saet, gruppe, key) {
   return !!saet?.prorata?.[`${gruppe}.${key}`]
 }
 
-// Effektivt årsbeløb for et felt: pro rata → månedsbeløb × antal måneder; ellers rå værdi.
+// Effektivt årsbeløb for et felt: pro rata → månedsbeløb × forholdsmæssige måneder; ellers rå værdi.
 export function effektivBeloeb(saet, gruppe, key) {
   const raw = Number(saet?.[gruppe]?.[key]) || 0
-  return erProrata(saet, gruppe, key) ? raw * antalMaaneder(saet) : raw
+  return erProrata(saet, gruppe, key) ? Math.round(raw * prorataMaaneder(saet)) : raw
 }
 
 // Alle effektive årsbeløb i en gruppe ('indtaegter' | 'udgifter').

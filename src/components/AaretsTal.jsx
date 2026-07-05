@@ -6,6 +6,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
   antalMaaneder, udlejningsdage, erProrata, effektivBeloeb, estimeretAarligRente, periodeForAar,
+  prorataMaaneder,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
@@ -221,7 +222,7 @@ function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata
         />
         <span className="suffix">{pro ? 'kr./md' : 'kr.'}</span>
       </div>
-      {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, felt))} for {mdr} mdr</span>}
+      {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, felt))} for perioden</span>}
     </div>
   )
 }
@@ -230,6 +231,7 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
   const resultat = resultatFoerRenter(saet)
   const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
   const mdr = antalMaaneder(saet)
+  const pmdr = prorataMaaneder(saet)
 
   return (
     <>
@@ -242,7 +244,7 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
           <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
         </div>
         <p className="muted" style={{ marginTop: 10 }}>
-          <strong>{udlejningsdage(saet)} udlejningsdage</strong> ({mdr} {mdr === 1 ? 'måned' : 'måneder'} til pro rata-fordeling)
+          <strong>{udlejningsdage(saet)} udlejningsdage</strong> ({pmdr.toLocaleString('da-DK', { maximumFractionDigits: 2 })} måneder til pro rata-fordeling)
         </p>
       </div>
 

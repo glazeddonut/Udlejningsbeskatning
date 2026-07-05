@@ -4,7 +4,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
-  periodeForAar,
+  periodeForAar, prorataMaaneder,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -174,6 +174,22 @@ test('periodeForAar: klipper lejeperioden til året', () => {
   assert.deepEqual(periodeForAar(lease, 2026), ['2026-01-01', '2026-12-31'])
   const lease2 = { startdato: '2025-08-05', slutdato: '2027-06-15' }
   assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
+})
+
+test('prorataMaaneder: delmåned tæller forholdsmæssigt (5.–31. aug + fulde mdr)', () => {
+  // aug: 27/31 = 0.8710; sep–dec: 4 fulde = 4 → 4.8710
+  const pm = prorataMaaneder({ fra_dato: '2025-08-05', til_dato: '2025-12-31' })
+  assert.ok(Math.abs(pm - 4.871) < 0.001)
+  // fuldt år = præcis 12
+  assert.equal(prorataMaaneder({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 12)
+})
+
+test('effektivBeloeb (datobaseret): leje forholdsmæssigt, ikke fulde 5 mdr', () => {
+  const saet = {
+    fra_dato: '2025-08-05', til_dato: '2025-12-31',
+    indtaegter: { leje: 6000 }, prorata: { 'indtaegter.leje': true },
+  }
+  assert.equal(effektivBeloeb(saet, 'indtaegter', 'leje'), 29226)  // 6000 × 4.871, afrundet
 })
 
 test('estimeretAarligRente: restgæld × rente, afrundet', () => {
