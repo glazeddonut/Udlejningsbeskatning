@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
-  resolveFordeling,
+  resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -124,4 +124,40 @@ test('markedslejeTjek advarer ikke ved markedskonform leje', () => {
 test('markedslejeTjek uden skøn giver harSkoen=false', () => {
   const t = markedslejeTjek({ maanedlig_leje: 6000, markedsleje_maanedlig_skoen: 0 }, 5)
   assert.equal(t.harSkoen, false)
+})
+
+test('antalMaaneder: fra/til giver antal, default = 12', () => {
+  assert.equal(antalMaaneder({ fra_maaned: 8, til_maaned: 12 }), 5)   // aug–dec
+  assert.equal(antalMaaneder({}), 12)
+  assert.equal(antalMaaneder({ fra_maaned: 6, til_maaned: 6 }), 1)
+})
+
+test('udlejningsdage: 30-dages-måneder (5 mdr = 150, fuldt år = 360)', () => {
+  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 150)
+  assert.equal(udlejningsdage({}), 360)
+})
+
+test('effektivBeloeb: pro rata ganger månedsbeløb med antal måneder', () => {
+  const saet = {
+    fra_maaned: 8, til_maaned: 12,       // 5 måneder
+    indtaegter: { leje: 6000 }, udgifter: { forsikring: 2400 },
+    prorata: { 'indtaegter.leje': true },  // leje er månedsbeløb
+  }
+  assert.equal(effektivBeloeb(saet, 'indtaegter', 'leje'), 30000)   // 6000 × 5
+  assert.equal(effektivBeloeb(saet, 'udgifter', 'forsikring'), 2400) // ikke pro rata → uændret
+})
+
+test('sumIndtaegter respekterer pro rata pr. felt', () => {
+  const saet = {
+    fra_maaned: 8, til_maaned: 12,
+    indtaegter: { leje: 6000, andet: 1000 },
+    prorata: { 'indtaegter.leje': true },   // kun leje er månedlig
+  }
+  assert.equal(sumIndtaegter(saet), 6000 * 5 + 1000)  // 31.000
+})
+
+test('tomtSaet: uden pro rata er sum = rå værdier (ingen regression)', () => {
+  const t = tomtSaet()
+  t.indtaegter.leje = 72000
+  assert.equal(sumIndtaegter(t), 72000)   // default 12 mdr, ingen prorata → uændret
 })

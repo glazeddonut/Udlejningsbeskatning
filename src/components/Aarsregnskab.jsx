@@ -5,6 +5,7 @@ import { normaliserSaet } from '../lib/saet.js'
 import { genererRegnskabPdf } from '../lib/pdf.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter, personOpgoerelse, resolveFordeling,
+  effektivBeloeb, udlejningsdage, antalMaaneder,
 } from '../lib/beregning.js'
 
 const INDTAEGT_RAEKKER = [
@@ -105,7 +106,7 @@ function Regnskab({ saet, year, grundlag, persons, property, loans, settings }) 
         <div className="rg-meta">
           {property?.navn || 'Ejendom'}{property?.adresse ? `, ${property.adresse}` : ''}<br />
           Ejere: {persons.map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' · ')}<br />
-          Grundlag: {grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} · Udlejet til nærtstående: {saet.naertstaaende ? 'ja' : 'nej'} · {saet.udlejningsdage} udlejningsdage
+          Grundlag: {grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} · Udlejet til nærtstående: {saet.naertstaaende ? 'ja' : 'nej'} · {antalMaaneder(saet)} mdr / {udlejningsdage(saet)} udlejningsdage
         </div>
       </div>
 
@@ -113,7 +114,7 @@ function Regnskab({ saet, year, grundlag, persons, property, loans, settings }) 
       <table className="rg">
         <tbody>
           {INDTAEGT_RAEKKER.filter(([k]) => saet.indtaegter[k]).map(([k, label]) => (
-            <tr key={k}><td>{label}</td><td className="num">{kr(saet.indtaegter[k])}</td></tr>
+            <tr key={k}><td>{label}</td><td className="num">{kr(effektivBeloeb(saet, 'indtaegter', k))}</td></tr>
           ))}
           <tr className="sum"><td>Indtægter i alt</td><td className="num">{kr(indt)}</td></tr>
         </tbody>
@@ -123,7 +124,7 @@ function Regnskab({ saet, year, grundlag, persons, property, loans, settings }) 
       <table className="rg">
         <tbody>
           {UDGIFT_RAEKKER.filter(([k]) => saet.udgifter[k]).map(([k, label]) => (
-            <tr key={k}><td>{label}</td><td className="num">{kr(saet.udgifter[k])}</td></tr>
+            <tr key={k}><td>{label}</td><td className="num">{kr(effektivBeloeb(saet, 'udgifter', k))}</td></tr>
           ))}
           <tr className="sum"><td>Udgifter i alt</td><td className="num">{kr(udg)}</td></tr>
         </tbody>

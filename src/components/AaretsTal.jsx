@@ -1,24 +1,36 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
 import { parseNum, kr } from '../lib/format.js'
-import { NumberField } from './fields.jsx'
+import { NumberField, SelectField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
+  antalMaaneder, udlejningsdage, erProrata, effektivBeloeb,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
+
+const MAANEDER = [
+  ['1', 'Januar'], ['2', 'Februar'], ['3', 'Marts'], ['4', 'April'], ['5', 'Maj'], ['6', 'Juni'],
+  ['7', 'Juli'], ['8', 'August'], ['9', 'September'], ['10', 'Oktober'], ['11', 'November'], ['12', 'December'],
+].map(([value, label]) => ({ value, label }))
 
 // Nyt talsæt med fornuftige defaults fra stamdata (leje, forbrug, grundskyld).
 function prefillSaet({ lease, property }) {
   const s = tomtSaet()
   if (lease) {
-    s.indtaegter.leje = (Number(lease.maanedlig_leje) || 0) * 12
-    s.indtaegter.vand = (Number(lease.forbrug_aconto?.vand) || 0) * 12
-    s.indtaegter.varme = (Number(lease.forbrug_aconto?.varme) || 0) * 12
-    s.udgifter.vand = (Number(lease.forbrug_aconto?.vand) || 0) * 12
-    s.udgifter.varme = (Number(lease.forbrug_aconto?.varme) || 0) * 12
+    // Løbende poster forudfyldes som MÅNEDSBELØB med pro rata slået til,
+    // så udlejningsperioden automatisk styrer årets beløb.
+    s.indtaegter.leje = Number(lease.maanedlig_leje) || 0
+    s.indtaegter.vand = Number(lease.forbrug_aconto?.vand) || 0
+    s.indtaegter.varme = Number(lease.forbrug_aconto?.varme) || 0
+    s.udgifter.vand = Number(lease.forbrug_aconto?.vand) || 0
+    s.udgifter.varme = Number(lease.forbrug_aconto?.varme) || 0
+    s.prorata = {
+      'indtaegter.leje': true, 'indtaegter.vand': true, 'indtaegter.varme': true,
+      'udgifter.vand': true, 'udgifter.varme': true,
+    }
   }
-  if (property) s.udgifter.grundskyld = Number(property.grundskyld_aarlig) || 0
+  if (property) s.udgifter.grundskyld = Number(property.grundskyld_aarlig) || 0  // årsbeløb
   return s
 }
 
@@ -94,6 +106,15 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
     }))
     setDirty(true)
   }
+  const setProrata = (gruppe, key, bool) => {
+    setYear(prev => {
+      const prorata = { ...(prev[mode].prorata || {}) }
+      const pk = `${gruppe}.${key}`
+      if (bool) prorata[pk] = true; else delete prorata[pk]
+      return { ...prev, [mode]: { ...prev[mode], prorata } }
+    })
+    setDirty(true)
+  }
 
   const gem = async () => {
     await api.put(`/years/${year.id}`, { aar: year.aar, budget: year.budget, faktisk: year.faktisk })
@@ -153,7 +174,7 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
       {year && <Redigering
         saet={year[mode]} loans={loans} persons={persons} property={property}
         fordeling={resolveFordeling(settings, persons)}
-        setField={setField} setRente={setRente}
+        setField={setField} setRente={setRente} setProrata={setProrata}
       />}
 
       {year && (
@@ -166,17 +187,54 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
   )
 }
 
-function Redigering({ saet, loans, persons, property, fordeling, setField, setRente }) {
+function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata }) {
+  const pro = erProrata(saet, gruppe, felt)
+  return (
+    <div className="field">
+      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span>{label} {hint && <span className="hint">· {hint}</span>}</span>
+        <span className="hint" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer', fontWeight: 400 }}>
+          <input type="checkbox" checked={pro} onChange={e => setProrata(gruppe, felt, e.target.checked)} style={{ width: 'auto', margin: 0 }} />
+          pr. måned
+        </span>
+      </label>
+      <div className="input-suffix">
+        <input
+          type="text" inputMode="decimal"
+          value={saet[gruppe][felt] || ''}
+          onChange={e => setField(gruppe, felt, e.target.value)}
+          style={{ paddingRight: 54 }}
+        />
+        <span className="suffix">{pro ? 'kr./md' : 'kr.'}</span>
+      </div>
+      {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, felt))} for {mdr} mdr</span>}
+    </div>
+  )
+}
+
+function Redigering({ saet, loans, persons, property, fordeling, setField, setRente, setProrata }) {
   const resultat = resultatFoerRenter(saet)
   const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
+  const mdr = antalMaaneder(saet)
 
   return (
     <>
       <div className="card">
+        <h2>Udlejningsperiode</h2>
+        <h3>Styrer antal udlejningsdage og fordeler beløb der er markeret “pr. måned”.</h3>
+        <div className="grid">
+          <SelectField label="Fra måned" value={String(saet.fra_maaned ?? 1)} onChange={v => setField(null, 'fra_maaned', v)} options={MAANEDER} />
+          <SelectField label="Til måned" value={String(saet.til_maaned ?? 12)} onChange={v => setField(null, 'til_maaned', v)} options={MAANEDER} />
+          <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
+        </div>
+        <p className="muted" style={{ marginTop: 10 }}>{mdr} måneder = <strong>{udlejningsdage(saet)} udlejningsdage</strong></p>
+      </div>
+
+      <div className="card">
         <h2>Indtægter</h2>
         <div className="grid">
           {INDTAEGT_FELTER.map(([k, label, hint]) => (
-            <NumberField key={k} label={label} hint={hint} value={saet.indtaegter[k] || ''} onChange={v => setField('indtaegter', k, v)} />
+            <BeloebFelt key={k} gruppe="indtaegter" felt={k} label={label} hint={hint} saet={saet} mdr={mdr} setField={setField} setProrata={setProrata} />
           ))}
         </div>
         <p className="muted" style={{ marginTop: 10 }}>I alt: <strong>{kr(sumIndtaegter(saet))}</strong></p>
@@ -186,7 +244,7 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
         <h2>Fradragsberettigede udgifter</h2>
         <div className="grid">
           {UDGIFT_FELTER.map(([k, label, hint]) => (
-            <NumberField key={k} label={label} hint={hint} value={saet.udgifter[k] || ''} onChange={v => setField('udgifter', k, v)} />
+            <BeloebFelt key={k} gruppe="udgifter" felt={k} label={label} hint={hint} saet={saet} mdr={mdr} setField={setField} setProrata={setProrata} />
           ))}
         </div>
         <p className="muted" style={{ marginTop: 10 }}>I alt: <strong>{kr(sumFradragsUdgifter(saet))}</strong></p>
@@ -215,14 +273,6 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
           ))}
         </div>
         {loans.length > 0 && <p className="muted" style={{ marginTop: 10 }}>Renter i alt: <strong>{kr(sumRenter(saet))}</strong></p>}
-      </div>
-
-      <div className="card">
-        <h2>Udlejning</h2>
-        <div className="grid">
-          <NumberField label="Udlejningsdage" value={saet.udlejningsdage || ''} onChange={v => setField(null, 'udlejningsdage', v)} suffix="dage" />
-          <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
-        </div>
       </div>
 
       <div className="card" style={{ background: 'var(--surface-2)' }}>

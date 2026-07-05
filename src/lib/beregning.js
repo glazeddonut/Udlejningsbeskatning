@@ -12,29 +12,61 @@
 // Tomt talsæt (budget = forskud, faktisk = selvangivelse).
 export function tomtSaet() {
   return {
+    fra_maaned: 1,            // udlejningsperiode: 1–12
+    til_maaned: 12,
     indtaegter: { leje: 0, vand: 0, varme: 0, andet: 0 },
     udgifter: {
       grundskyld: 0, faellesudgifter: 0, forsikring: 0, vedligeholdelse: 0,
       vand: 0, varme: 0, administration: 0, renovation: 0, andet: 0,
     },
+    prorata: {},              // { "indtaegter.leje": true } — true = beløbet er PR. MÅNED
     forbedringer: 0,
-    renteudgifter: {},        // { loanId: beløb }
-    udlejningsdage: 360,
+    renteudgifter: {},        // { loanId: beløb } (aldrig pro rata — faktiske renter)
     udlejet_andel_pct: 100,
     naertstaaende: true,
   }
 }
 
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(n) || 0)))
 const sumValues = (obj) =>
   Object.values(obj || {}).reduce((s, v) => s + (Number(v) || 0), 0)
 
+// Antal aktive udlejningsmåneder i året (1–12).
+export function antalMaaneder(saet) {
+  const fra = clamp(saet?.fra_maaned ?? 1, 1, 12)
+  const til = clamp(saet?.til_maaned ?? 12, 1, 12)
+  return Math.max(0, til - fra + 1)
+}
+
+// Udlejningsdage udledt af perioden (30-dages-måneder; fuldt år = 360, jf. skat.dk-praksis).
+export function udlejningsdage(saet) {
+  return antalMaaneder(saet) * 30
+}
+
+export function erProrata(saet, gruppe, key) {
+  return !!saet?.prorata?.[`${gruppe}.${key}`]
+}
+
+// Effektivt årsbeløb for et felt: pro rata → månedsbeløb × antal måneder; ellers rå værdi.
+export function effektivBeloeb(saet, gruppe, key) {
+  const raw = Number(saet?.[gruppe]?.[key]) || 0
+  return erProrata(saet, gruppe, key) ? raw * antalMaaneder(saet) : raw
+}
+
+// Alle effektive årsbeløb i en gruppe ('indtaegter' | 'udgifter').
+export function effektivGruppe(saet, gruppe) {
+  const out = {}
+  for (const k of Object.keys(saet?.[gruppe] || {})) out[k] = effektivBeloeb(saet, gruppe, k)
+  return out
+}
+
 export function sumIndtaegter(saet) {
-  return sumValues(saet?.indtaegter)
+  return sumValues(effektivGruppe(saet, 'indtaegter'))
 }
 
 // Fradragsberettigede driftsudgifter. Forbedringer indgår bevidst IKKE.
 export function sumFradragsUdgifter(saet) {
-  return sumValues(saet?.udgifter)
+  return sumValues(effektivGruppe(saet, 'udgifter'))
 }
 
 // Udlejningsresultat før renter (kan være negativt = underskud).

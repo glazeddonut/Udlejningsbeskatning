@@ -2,7 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { kr } from './format.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter,
-  personOpgoerelse, resolveFordeling,
+  personOpgoerelse, resolveFordeling, effektivBeloeb, udlejningsdage, antalMaaneder,
 } from './beregning.js'
 
 const A4 = [595.28, 841.89]
@@ -58,17 +58,17 @@ export async function genererRegnskabPdf({ year, saet, grundlag, persons, proper
   const ejendom = `${property?.navn || 'Ejendom'}${property?.adresse ? ', ' + property.adresse : ''}`
   text(ejendom, MARGIN, y, 10, font, MUTED); y -= 14
   text('Ejere: ' + persons.map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' - '), MARGIN, y, 10, font, MUTED); y -= 14
-  text(`Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} - naertstaaende: ${saet.naertstaaende ? 'ja' : 'nej'} - ${saet.udlejningsdage} udlejningsdage`, MARGIN, y, 10, font, MUTED); y -= 8
+  text(`Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} - naertstaaende: ${saet.naertstaaende ? 'ja' : 'nej'} - ${antalMaaneder(saet)} mdr / ${udlejningsdage(saet)} udlejningsdage`, MARGIN, y, 10, font, MUTED); y -= 8
   hline(y); y -= 4
 
   // ── Indtaegter ──
   sektion('Indtaegter')
-  INDTAEGT_RAEKKER.filter(([k]) => saet.indtaegter[k]).forEach(([k, l]) => row(l, kr(saet.indtaegter[k])))
+  INDTAEGT_RAEKKER.filter(([k]) => saet.indtaegter[k]).forEach(([k, l]) => row(l, kr(effektivBeloeb(saet, 'indtaegter', k))))
   row('Indtaegter i alt', kr(sumIndtaegter(saet)), { f: bold })
 
   // ── Udgifter ──
   sektion('Fradragsberettigede udgifter')
-  UDGIFT_RAEKKER.filter(([k]) => saet.udgifter[k]).forEach(([k, l]) => row(l, kr(saet.udgifter[k])))
+  UDGIFT_RAEKKER.filter(([k]) => saet.udgifter[k]).forEach(([k, l]) => row(l, kr(effektivBeloeb(saet, 'udgifter', k))))
   row('Udgifter i alt', kr(sumFradragsUdgifter(saet)), { f: bold })
 
   // ── Resultat ──

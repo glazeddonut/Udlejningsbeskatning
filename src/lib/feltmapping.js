@@ -16,6 +16,8 @@
 //
 // "kilde" evalueres pr. person i evalKilde nedenfor.
 
+import { udlejningsdage } from './beregning.js'
+
 // `naar`: 'overskud' vises kun når personens resultat ≥ 0; 'underskud' kun når < 0.
 // (Verificeret mod skat.dk juli 2026: forskud 221/435, 481, 699; oplysningsskema 111/112, 117, 42, 207, 699.)
 export const DEFAULT_FELTMAPPING = {
@@ -89,7 +91,7 @@ export function evalKilde(kilde, { personOpg, saet, person }) {
     case 'resultat': return Math.round(personOpg?.resultatAndel || 0)
     case 'renter_beskattet': return Math.round(personOpg?.renter || 0)
     case 'renter_flyt': return Math.round(personOpg?.renterFysisk || 0)
-    case 'udlejningsdage': return Math.round(Number(saet?.udlejningsdage) || 0)
+    case 'udlejningsdage': return udlejningsdage(saet)
     case 'udlejet_andel_pct': return Math.round(Number(saet?.udlejet_andel_pct) || 0)
     case 'naertstaaende': return saet?.naertstaaende ? 'Ja' : 'Nej'
     case 'virksomhedsaktivitet': return 'Aktiv erhvervsmæssig virksomhed'
