@@ -12,8 +12,8 @@
 // Tomt talsæt (budget = forskud, faktisk = selvangivelse).
 export function tomtSaet() {
   return {
-    fra_maaned: 1,            // udlejningsperiode: 1–12
-    til_maaned: 12,
+    fra_dato: '',             // udlejningsperiode (ISO YYYY-MM-DD); udledes fra lejekontrakt
+    til_dato: '',
     indtaegter: { leje: 0, vand: 0, varme: 0, andet: 0 },
     udgifter: {
       grundskyld: 0, faellesudgifter: 0, forsikring: 0, vedligeholdelse: 0,
@@ -31,15 +31,39 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(n) || 0
 const sumValues = (obj) =>
   Object.values(obj || {}).reduce((s, v) => s + (Number(v) || 0), 0)
 
-// Antal aktive udlejningsmåneder i året (1–12).
+function parseDato(s) {
+  if (!s) return null
+  const d = new Date(s + 'T00:00:00')
+  return isNaN(d.getTime()) ? null : d
+}
+
+// Udlejningsperioden for et år, klippet til året, udledt af lejekontrakten.
+// Returnerer [fra_dato, til_dato] som ISO-strenge.
+export function periodeForAar(lease, aar) {
+  const ys = `${aar}-01-01`, ye = `${aar}-12-31`
+  const ls = lease?.startdato || ys
+  const le = lease?.slutdato || ye
+  return [ls > ys ? ls : ys, le < ye ? le : ye]   // ISO-datoer sorterer leksikalsk
+}
+
+// Antal kalendermåneder perioden berører (til pro rata). Datobaseret; falder tilbage
+// til gammelt måneds-format hvis datoer mangler.
 export function antalMaaneder(saet) {
+  const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
+  if (f && t) {
+    const m = (t.getFullYear() * 12 + t.getMonth()) - (f.getFullYear() * 12 + f.getMonth()) + 1
+    return Math.max(0, m)
+  }
   const fra = clamp(saet?.fra_maaned ?? 1, 1, 12)
   const til = clamp(saet?.til_maaned ?? 12, 1, 12)
   return Math.max(0, til - fra + 1)
 }
 
-// Udlejningsdage udledt af perioden (30-dages-måneder; fuldt år = 360, jf. skat.dk-praksis).
+// Antal udlejningsdage (faktiske kalenderdage, inklusiv start og slut).
+// Falder tilbage til 30-dages-måneder hvis datoer mangler (fuldt år = 360).
 export function udlejningsdage(saet) {
+  const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
+  if (f && t) return Math.max(0, Math.round((t - f) / 86400000) + 1)
   return antalMaaneder(saet) * 30
 }
 

@@ -4,6 +4,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
+  periodeForAar,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -154,6 +155,25 @@ test('sumIndtaegter respekterer pro rata pr. felt', () => {
     prorata: { 'indtaegter.leje': true },   // kun leje er månedlig
   }
   assert.equal(sumIndtaegter(saet), 6000 * 5 + 1000)  // 31.000
+})
+
+test('udlejningsdage (datobaseret): faktiske kalenderdage inkl. start og slut', () => {
+  assert.equal(udlejningsdage({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 149)
+  assert.equal(udlejningsdage({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 365)
+  assert.equal(udlejningsdage({ fra_dato: '2025-06-10', til_dato: '2025-06-10' }), 1)
+})
+
+test('antalMaaneder (datobaseret): antal berørte kalendermåneder', () => {
+  assert.equal(antalMaaneder({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 5)  // aug–dec
+  assert.equal(antalMaaneder({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 12)
+})
+
+test('periodeForAar: klipper lejeperioden til året', () => {
+  const lease = { startdato: '2025-08-05' }                 // åben slutdato
+  assert.deepEqual(periodeForAar(lease, 2025), ['2025-08-05', '2025-12-31'])
+  assert.deepEqual(periodeForAar(lease, 2026), ['2026-01-01', '2026-12-31'])
+  const lease2 = { startdato: '2025-08-05', slutdato: '2027-06-15' }
+  assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
 })
 
 test('estimeretAarligRente: restgæld × rente, afrundet', () => {

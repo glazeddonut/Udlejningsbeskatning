@@ -1,22 +1,28 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
 import { parseNum, kr } from '../lib/format.js'
-import { NumberField, SelectField } from './fields.jsx'
+import { NumberField, TextField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
-  antalMaaneder, udlejningsdage, erProrata, effektivBeloeb, estimeretAarligRente,
+  antalMaaneder, udlejningsdage, erProrata, effektivBeloeb, estimeretAarligRente, periodeForAar,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
-const MAANEDER = [
-  ['1', 'Januar'], ['2', 'Februar'], ['3', 'Marts'], ['4', 'April'], ['5', 'Maj'], ['6', 'Juni'],
-  ['7', 'Juli'], ['8', 'August'], ['9', 'September'], ['10', 'Oktober'], ['11', 'November'], ['12', 'December'],
-].map(([value, label]) => ({ value, label }))
+// År udledt af lejekontrakten: [minÅr, maxÅr]. maxÅr = null hvis lejemålet er åbent (ingen slutdato).
+function tilladteAar(lease) {
+  const min = lease?.startdato ? Number(lease.startdato.slice(0, 4)) : null
+  const max = lease?.slutdato ? Number(lease.slutdato.slice(0, 4)) : null
+  return [min, max]
+}
 
 // Nyt talsæt med fornuftige defaults fra stamdata (leje, forbrug, grundskyld).
-function prefillSaet({ lease, property, loans }) {
+function prefillSaet({ lease, property, loans, aar }) {
   const s = tomtSaet()
+  // Udlejningsperioden udledes fra lejekontrakten, klippet til året.
+  const [fra, til] = periodeForAar(lease, aar)
+  s.fra_dato = fra
+  s.til_dato = til
   // Renter estimeres fra lånenes restgæld × rente (budget-skøn; rettes med faktiske tal).
   ;(loans || []).forEach(l => { s.renteudgifter[l.id] = estimeretAarligRente(l) })
   if (lease) {
@@ -75,8 +81,11 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
     }
   }, [valgtAar, years])
 
+  const [minAar, maxAar] = tilladteAar(lease)
   const startOpret = () => {
-    const forslag = sorterede[0] ? sorterede[0].aar + 1 : new Date().getFullYear()
+    let forslag = sorterede[0] ? sorterede[0].aar + 1 : (minAar || new Date().getFullYear())
+    if (minAar && forslag < minAar) forslag = minAar
+    if (maxAar && forslag > maxAar) forslag = maxAar
     setNyAar(String(forslag))
     setOpretFejl('')
     setVisOpret(true)
@@ -84,8 +93,10 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
   const bekraeftOpret = async () => {
     const aar = Number(nyAar)
     if (!aar || aar < 1900 || aar > 2200) { setOpretFejl('Angiv et gyldigt årstal.'); return }
+    if (minAar && aar < minAar) { setOpretFejl(`Lejekontrakten starter i ${minAar} — tidligere år kan ikke oprettes.`); return }
+    if (maxAar && aar > maxAar) { setOpretFejl(`Lejemålet slutter i ${maxAar} — senere år kan ikke oprettes.`); return }
     if (years.find(y => y.aar === aar)) { setOpretFejl('Året findes allerede.'); return }
-    const start = prefillSaet({ lease, property, loans })
+    const start = prefillSaet({ lease, property, loans, aar })
     await api.post('/years', { aar, budget: start, faktisk: start })
     setVisOpret(false)
     setValgtAar(aar)
@@ -96,7 +107,8 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
     setYear(prev => {
       const saet = { ...prev[mode] }
       if (path) saet[path] = { ...saet[path], [key]: parseNum(v) }
-      else saet[key] = key === 'naertstaaende' ? v : parseNum(v)
+      else if (key === 'naertstaaende' || key === 'fra_dato' || key === 'til_dato') saet[key] = v
+      else saet[key] = parseNum(v)
       return { ...prev, [mode]: saet }
     })
     setDirty(true)
@@ -146,8 +158,8 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
           {!visOpret && <button className="btn ghost" onClick={startOpret}>+ Opret år</button>}
           {visOpret && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-              <div className="field" style={{ minWidth: 110 }}>
-                <label>Nyt år</label>
+              <div className="field" style={{ minWidth: 130 }}>
+                <label>Nyt år {(minAar || maxAar) && <span className="hint">· {minAar ?? '…'}–{maxAar ?? 'åbent'}</span>}</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -223,13 +235,15 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
     <>
       <div className="card">
         <h2>Udlejningsperiode</h2>
-        <h3>Styrer antal udlejningsdage og fordeler beløb der er markeret “pr. måned”.</h3>
+        <h3>Udledt fra lejekontrakten, klippet til året. Styrer udlejningsdage og fordeler beløb markeret “pr. måned”.</h3>
         <div className="grid">
-          <SelectField label="Fra måned" value={String(saet.fra_maaned ?? 1)} onChange={v => setField(null, 'fra_maaned', v)} options={MAANEDER} />
-          <SelectField label="Til måned" value={String(saet.til_maaned ?? 12)} onChange={v => setField(null, 'til_maaned', v)} options={MAANEDER} />
+          <TextField label="Fra dato" type="date" value={saet.fra_dato || ''} onChange={v => setField(null, 'fra_dato', v)} />
+          <TextField label="Til dato" type="date" value={saet.til_dato || ''} onChange={v => setField(null, 'til_dato', v)} />
           <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
         </div>
-        <p className="muted" style={{ marginTop: 10 }}>{mdr} måneder = <strong>{udlejningsdage(saet)} udlejningsdage</strong></p>
+        <p className="muted" style={{ marginTop: 10 }}>
+          <strong>{udlejningsdage(saet)} udlejningsdage</strong> ({mdr} {mdr === 1 ? 'måned' : 'måneder'} til pro rata-fordeling)
+        </p>
       </div>
 
       <div className="card">

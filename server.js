@@ -166,8 +166,15 @@ app.get('/api/years', (req, res) => {
 app.post('/api/years', (req, res) => {
   const db = loadDb()
   const { aar, budget, faktisk } = req.body
-  if (db.years.find(y => y.aar === Number(aar)))
+  const aarN = Number(aar)
+  if (db.years.find(y => y.aar === aarN))
     return res.status(400).json({ error: 'Året findes allerede' })
+  // Lejekontrakten afgør hvilke år der kan oprettes.
+  const ls = db.lease?.startdato, le = db.lease?.slutdato
+  if (ls && aarN < Number(ls.slice(0, 4)))
+    return res.status(400).json({ error: `Lejekontrakten starter i ${ls.slice(0, 4)} — tidligere år kan ikke oprettes` })
+  if (le && aarN > Number(le.slice(0, 4)))
+    return res.status(400).json({ error: `Lejemålet slutter i ${le.slice(0, 4)} — senere år kan ikke oprettes` })
   const year = { id: db.nextYearId++, aar: Number(aar), budget: budget ?? {}, faktisk: faktisk ?? {} }
   db.years.push(year)
   saveDb(db)
