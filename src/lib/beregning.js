@@ -79,6 +79,11 @@ export function sumRenter(saet) {
   return sumValues(saet?.renteudgifter)
 }
 
+// Estimeret årlig renteudgift for et lån (restgæld × rente). Bruges som budget-skøn.
+export function estimeretAarligRente(loan) {
+  return Math.round((Number(loan?.restgaeld) || 0) * (Number(loan?.rente_pct) || 0) / 100)
+}
+
 // Fordel et beløb efter andele { personId: pct }. Returnerer { personId: beløb }.
 export function fordelPrPerson(beloeb, andele) {
   const res = {}

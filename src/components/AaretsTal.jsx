@@ -5,7 +5,7 @@ import { NumberField, SelectField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
-  antalMaaneder, udlejningsdage, erProrata, effektivBeloeb,
+  antalMaaneder, udlejningsdage, erProrata, effektivBeloeb, estimeretAarligRente,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
@@ -15,8 +15,10 @@ const MAANEDER = [
 ].map(([value, label]) => ({ value, label }))
 
 // Nyt talsæt med fornuftige defaults fra stamdata (leje, forbrug, grundskyld).
-function prefillSaet({ lease, property }) {
+function prefillSaet({ lease, property, loans }) {
   const s = tomtSaet()
+  // Renter estimeres fra lånenes restgæld × rente (budget-skøn; rettes med faktiske tal).
+  ;(loans || []).forEach(l => { s.renteudgifter[l.id] = estimeretAarligRente(l) })
   if (lease) {
     // Løbende poster forudfyldes som MÅNEDSBELØB med pro rata slået til,
     // så udlejningsperioden automatisk styrer årets beløb.
@@ -83,7 +85,7 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
     const aar = Number(nyAar)
     if (!aar || aar < 1900 || aar > 2200) { setOpretFejl('Angiv et gyldigt årstal.'); return }
     if (years.find(y => y.aar === aar)) { setOpretFejl('Året findes allerede.'); return }
-    const start = prefillSaet({ lease, property })
+    const start = prefillSaet({ lease, property, loans })
     await api.post('/years', { aar, budget: start, faktisk: start })
     setVisOpret(false)
     setValgtAar(aar)
@@ -259,14 +261,24 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
       </div>
 
       <div className="card">
-        <h2>Renteudgifter</h2>
-        <h3>Personlige renteudgifter (kapitalindkomst) — fordeles efter hæftelse, ikke en del af udlejningsresultatet.</h3>
+        <div className="card-header">
+          <div>
+            <h2>Renteudgifter</h2>
+            <h3>Personlige renteudgifter (kapitalindkomst) — fordeles efter hæftelse, ikke en del af udlejningsresultatet.</h3>
+          </div>
+          {loans.length > 0 && (
+            <button className="btn ghost" onClick={() => loans.forEach(l => setRente(l.id, estimeretAarligRente(l)))}>
+              ↻ Beregn fra stamdata
+            </button>
+          )}
+        </div>
         {loans.length === 0 && <p className="muted">Tilføj lån under Stamdata for at indtaste renter.</p>}
         <div className="grid">
           {loans.map(l => (
             <NumberField
               key={l.id}
               label={l.laangiver || (l.type === 'realkredit' ? 'Realkreditlån' : 'Banklån')}
+              hint={`skøn fra lån: ${kr(estimeretAarligRente(l))}`}
               value={saet.renteudgifter[l.id] || ''}
               onChange={v => setRente(l.id, v)}
             />

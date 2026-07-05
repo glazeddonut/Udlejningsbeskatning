@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
-  resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb,
+  resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -154,6 +154,12 @@ test('sumIndtaegter respekterer pro rata pr. felt', () => {
     prorata: { 'indtaegter.leje': true },   // kun leje er månedlig
   }
   assert.equal(sumIndtaegter(saet), 6000 * 5 + 1000)  // 31.000
+})
+
+test('estimeretAarligRente: restgæld × rente, afrundet', () => {
+  assert.equal(estimeretAarligRente({ restgaeld: 1482717, rente_pct: 4 }), 59309)
+  assert.equal(estimeretAarligRente({ restgaeld: 2000000, rente_pct: 3.5 }), 70000)
+  assert.equal(estimeretAarligRente({}), 0)
 })
 
 test('tomtSaet: uden pro rata er sum = rå værdier (ingen regression)', () => {
