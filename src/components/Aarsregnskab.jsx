@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { api } from '../lib/api.js'
 import { kr } from '../lib/format.js'
 import { normaliserSaet } from '../lib/saet.js'
+import { genererRegnskabPdf } from '../lib/pdf.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter, personOpgoerelse, resolveFordeling,
 } from '../lib/beregning.js'
@@ -28,8 +30,27 @@ export default function Aarsregnskab({ years, persons, property, loans, settings
   const [valgtAar, setValgtAar] = useState(sorterede[0]?.aar ?? null)
   const [grundlag, setGrundlag] = useState('faktisk')  // regnskab bygger normalt på faktiske tal
 
+  const [genererer, setGenererer] = useState(false)
   const year = years.find(y => y.aar === valgtAar)
   const saet = year ? normaliserSaet(year[grundlag]) : null
+
+  const downloadPdf = async () => {
+    if (!year || !saet) return
+    setGenererer(true)
+    try {
+      const bilag = await api.get(`/bilag?aar=${year.aar}`)
+      const bytes = await genererRegnskabPdf({ year, saet, grundlag, persons, property, loans, settings, bilag })
+      const blob = new Blob([bytes], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `regnskab-${year.aar}.pdf`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Kunne ikke generere PDF: ' + (e.message || e))
+    } finally {
+      setGenererer(false)
+    }
+  }
 
   return (
     <>
@@ -54,7 +75,10 @@ export default function Aarsregnskab({ years, persons, property, loans, settings
               <option value="budget">Budget (forskud)</option>
             </select>
           </div>
-          <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => window.print()} disabled={!year}>🖨 Print / gem som PDF</button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button className="btn ghost" onClick={() => window.print()} disabled={!year}>🖨 Print</button>
+            <button className="btn primary" onClick={downloadPdf} disabled={!year || genererer}>{genererer ? 'Genererer…' : '⬇ Download PDF (med bilag)'}</button>
+          </div>
         </div>
       </div>
 

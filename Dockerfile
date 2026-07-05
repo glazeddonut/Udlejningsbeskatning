@@ -15,8 +15,9 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
-# Databasen lægges på en volume, uden for koden
+# Databasen + bilag lægges på en volume, uden for koden
 ENV DB_PATH=/data/udlejning-data.json
+ENV BILAG_DIR=/data/bilag
 ENV PORT=3002
 
 # Installer KUN production-deps (express) — ingen React/Vite i runtime

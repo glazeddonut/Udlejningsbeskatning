@@ -3,6 +3,7 @@ import Stamdata from './components/Stamdata.jsx'
 import AaretsTal from './components/AaretsTal.jsx'
 import SkatteIndberetning from './components/SkatteIndberetning.jsx'
 import Aarsregnskab from './components/Aarsregnskab.jsx'
+import Bilag from './components/Bilag.jsx'
 import Overblik from './components/Overblik.jsx'
 import Indstillinger from './components/Indstillinger.jsx'
 
@@ -11,6 +12,7 @@ const TABS = [
   { id: 'stamdata',    label: 'Stamdata' },
   { id: 'aaret',       label: 'Årets tal' },
   { id: 'skat',        label: 'Skatteindberetning' },
+  { id: 'bilag',       label: 'Bilag' },
   { id: 'regnskab',    label: 'Årsregnskab' },
   { id: 'indstillinger', label: 'Indstillinger' },
 ]
@@ -103,6 +105,9 @@ export default function App() {
         )}
         {loaded && activeTab === 'skat' && (
           <SkatteIndberetning years={years} persons={persons} property={property} loans={loans} fieldMappings={fieldMappings} settings={settings} reload={fetchData} />
+        )}
+        {loaded && activeTab === 'bilag' && (
+          <Bilag years={years} />
         )}
         {loaded && activeTab === 'regnskab' && (
           <Aarsregnskab years={years} persons={persons} property={property} loans={loans} settings={settings} />

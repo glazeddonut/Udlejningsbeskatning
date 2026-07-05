@@ -1,11 +1,14 @@
 import express from 'express'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
+import { dirname, join, extname } from 'path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // DB-sti kan overrides med env var (peg på en persistent volume i container)
 const DB_PATH = process.env.DB_PATH || join(__dirname, 'udlejning-data.json')
+// Bilag-filer gemmes på disk (ikke i JSON'en), så DB'en holdes lille.
+const BILAG_DIR = process.env.BILAG_DIR || join(__dirname, 'bilag')
+if (!existsSync(BILAG_DIR)) mkdirSync(BILAG_DIR, { recursive: true })
 
 // Standardindstillinger. Satser/beløbsgrænser SKAL verificeres mod skat.dk /
 // Den juridiske vejledning pr. år før de bruges — se README + Indstillinger.
@@ -24,11 +27,13 @@ const emptyDb = () => ({
   loans: [],            // { id, type, laangiver, hovedstol, restgaeld, rente_pct, haeftelse{} }
   lease: null,          // singleton (lejekontrakt til datteren)
   years: [],            // { id, aar, budget:{...}, faktisk:{...} }
+  bilag: [],            // { id, aar, nummer, dato, tekst, beloeb, kategori, type, filnavn, mimetype, filsti }
   settings: { ...DEFAULT_SETTINGS },
   field_mappings: {},   // overrides: { "2026-forskud": [ {felt_nr,label,kilde} ] }; tom = brug defaults i frontend
   nextPersonId: 1,
   nextLoanId: 1,
   nextYearId: 1,
+  nextBilagId: 1,
 })
 
 function loadDb() {
@@ -43,9 +48,11 @@ function loadDb() {
     if (db.property === undefined) db.property = null
     if (db.lease === undefined) db.lease = null
     if (!db.field_mappings) db.field_mappings = {}
+    if (!db.bilag) db.bilag = []
     if (!db.nextPersonId) db.nextPersonId = 1
     if (!db.nextLoanId) db.nextLoanId = 1
     if (!db.nextYearId) db.nextYearId = 1
+    if (!db.nextBilagId) db.nextBilagId = 1
 
     // Merge settings med defaults (tilføjer nye nøgler hvis de mangler)
     db.settings = { ...DEFAULT_SETTINGS, ...(db.settings ?? {}) }
@@ -59,7 +66,7 @@ function saveDb(db) {
 }
 
 const app = express()
-app.use(express.json())
+app.use(express.json({ limit: '25mb' }))   // bilag sendes som base64 → større limit
 app.use(express.static(join(__dirname, 'dist')))
 
 // ── Health check (til container/orchestrator) ────────
@@ -205,6 +212,73 @@ app.put('/api/field-mappings', (req, res) => {
   db.field_mappings = req.body ?? {}
   saveDb(db)
   res.json(db.field_mappings)
+})
+
+// ── Bilag ────────────────────────────────────────────
+// Liste (metadata only; filsti udelades ikke, men filen hentes separat).
+app.get('/api/bilag', (req, res) => {
+  const aar = req.query.aar ? Number(req.query.aar) : null
+  let liste = loadDb().bilag
+  if (aar) liste = liste.filter(b => b.aar === aar)
+  res.json(liste)
+})
+
+// Upload: fil sendes som base64 (data-URL eller ren base64) i JSON-body.
+app.post('/api/bilag', (req, res) => {
+  const db = loadDb()
+  const { aar, dato, tekst, beloeb, kategori, type, filnavn, mimetype, data } = req.body
+  const id = db.nextBilagId++
+  let filsti = null
+  if (data) {
+    const base64 = String(data).includes(',') ? String(data).split(',')[1] : String(data)
+    const ext = extname(filnavn || '') || (mimetype === 'application/pdf' ? '.pdf' : '.bin')
+    filsti = `${id}${ext}`   // filnavn udledes af id — ingen path traversal fra brugerinput
+    writeFileSync(join(BILAG_DIR, filsti), Buffer.from(base64, 'base64'))
+  }
+  const nummer = Math.max(0, ...db.bilag.filter(b => b.aar === Number(aar)).map(b => b.nummer || 0)) + 1
+  const bilag = {
+    id, aar: Number(aar), nummer,
+    dato: dato ?? '', tekst: tekst ?? '', beloeb: beloeb ?? 0,
+    kategori: kategori ?? '', type: type ?? 'udgift',
+    filnavn: filnavn ?? '', mimetype: mimetype ?? '', filsti,
+  }
+  db.bilag.push(bilag)
+  saveDb(db)
+  res.json(bilag)
+})
+
+// Hent selve filen (til preview i UI og til PDF-generering).
+app.get('/api/bilag/:id/fil', (req, res) => {
+  const b = loadDb().bilag.find(x => x.id === Number(req.params.id))
+  if (!b || !b.filsti) return res.status(404).end()
+  const p = join(BILAG_DIR, b.filsti)
+  if (!existsSync(p)) return res.status(404).end()
+  res.setHeader('Content-Type', b.mimetype || 'application/octet-stream')
+  res.send(readFileSync(p))
+})
+
+app.put('/api/bilag/:id', (req, res) => {
+  const db = loadDb()
+  const b = db.bilag.find(x => x.id === Number(req.params.id))
+  if (b) {
+    const { dato, tekst, beloeb, kategori, type } = req.body
+    if (dato !== undefined) b.dato = dato
+    if (tekst !== undefined) b.tekst = tekst
+    if (beloeb !== undefined) b.beloeb = beloeb
+    if (kategori !== undefined) b.kategori = kategori
+    if (type !== undefined) b.type = type
+  }
+  saveDb(db)
+  res.json({ success: true })
+})
+
+app.delete('/api/bilag/:id', (req, res) => {
+  const db = loadDb()
+  const b = db.bilag.find(x => x.id === Number(req.params.id))
+  if (b?.filsti) { try { unlinkSync(join(BILAG_DIR, b.filsti)) } catch { /* filen mangler allerede */ } }
+  db.bilag = db.bilag.filter(x => x.id !== Number(req.params.id))
+  saveDb(db)
+  res.json({ success: true })
 })
 
 // ── SPA fallback ─────────────────────────────────────
