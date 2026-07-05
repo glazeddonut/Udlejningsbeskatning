@@ -1,0 +1,8 @@
+node_modules
+dist
+# DB-filen indeholder personlige data (CPR m.m.) og committes ALDRIG
+udlejning-data.json
+*.local
+.DS_Store
+# Lokale Claude Code-tilladelser (maskinspecifikke)
+.claude/settings.local.json

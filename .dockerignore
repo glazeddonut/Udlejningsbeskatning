@@ -1,0 +1,5 @@
+node_modules
+dist
+.git
+udlejning-data.json
+.DS_Store

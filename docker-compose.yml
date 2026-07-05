@@ -1,0 +1,19 @@
+services:
+  udlejning:
+    build: .
+    image: udlejningsbeskatning:latest
+    container_name: udlejningsbeskatning
+    restart: unless-stopped
+    ports:
+      # Vært:Container — ram appen på http://<server-ip>:3002
+      - "3002:3002"
+    volumes:
+      # Persistér databasen på værten, så data overlever container-genstart/opdatering
+      - udlejning-data:/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - DB_PATH=/data/udlejning-data.json
+
+volumes:
+  udlejning-data:
