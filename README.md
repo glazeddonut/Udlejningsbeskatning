@@ -39,7 +39,8 @@ npm start        # Express serverer dist/ på 3002
 ## Docker
 
 ```bash
-docker compose up -d --build   # data på named volume "udlejning-data"
+cp docker-compose.yml.example docker-compose.yml   # tilpas efter behov (git-ignoreret)
+docker compose up -d --build                        # data på named volume "udlejning-data"
 ```
 
 Appen svarer på port **3002** (valgt for ikke at kollidere med FormueFremskrivning på 3001).

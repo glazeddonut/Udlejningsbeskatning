@@ -6,3 +6,5 @@ udlejning-data.json
 .DS_Store
 # Lokale Claude Code-tilladelser (maskinspecifikke)
 .claude/settings.local.json
+# Lokal docker-compose (kopiér fra docker-compose.yml.example)
+docker-compose.yml
