@@ -5,9 +5,15 @@ ejet 50/50 af to ægtefæller og udlejet til deres datter.
 
 Appen:
 - vedligeholder alle stamdata om lejlighed, lån, lejekontrakt og udlejning (persistent, år efter år),
-- genererer de præcise **skat.dk-felter pr. person** til både **forskudsopgørelse** og
-  **selvangivelse/oplysningsskema** for begge ægtefæller,
-- printer et **årsregnskab** for udlejningen.
+- genererer de præcise **skat.dk-felter pr. person** (rolle-afhængigt, jf. kildeskattelovens
+  §25 A) til både **forskudsopgørelse** og **selvangivelse/oplysningsskema** for begge ægtefæller,
+- håndterer **bilag** (kvitteringer som billeder/PDF) pr. år,
+- genererer et **årsregnskab som PDF** med bilagsliste og de vedhæftede bilag indlejret.
+
+Lejekontrakten styrer hvilke år der kan oprettes og hver års udlejningsperiode; beløb kan
+fordeles forholdsmæssigt efter dage (delår som fx lejestart 5. august håndteres dag-præcist).
+
+> Faner: Overblik · Stamdata · Årets tal · Skatteindberetning · Bilag · Årsregnskab · Indstillinger.
 
 > ⚠️ **Ikke skatterådgivning.** Appen er et hjælpeværktøj. Konkrete skat.dk-feltnumre,
 > satser og beløbsgrænser er konfigurerbare og skal verificeres mod skat.dk /
@@ -19,6 +25,9 @@ Appen:
 - **Backend:** Express (`server.js`) — serverer API + bygget frontend fra `dist/`
 - **Database:** én JSON-fil, `udlejning-data.json` (path kan overrides med `DB_PATH`).
   Filen er git-ignored og indeholder personlige data (CPR m.m.) — committes aldrig.
+- **Bilag:** uploadede kvitteringer gemmes på disk i `BILAG_DIR` (default `./bilag`, git-ignored).
+- **PDF:** regnskabs-PDF genereres med [pdf-lib](https://pdf-lib.js.org/) i browseren.
+- **Tests:** `npm test` (rene regnetests i `src/lib/`).
 
 ## Kør lokalt
 
