@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import { kr } from './format.js'
+import { kr, kr2 } from './format.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter,
   personOpgoerelse, resolveFordeling, effektivBeloeb, udlejningsdage,
@@ -105,7 +105,7 @@ export async function genererRegnskabPdf({ year, saet, grundlag, persons, proper
       const fortegn = b.type === 'indtaegt' ? '' : '-'
       text(String(b.nummer), MARGIN, y, 10); text(b.dato || '', MARGIN + 34, y, 10)
       text((b.tekst || '').slice(0, 34), MARGIN + 110, y, 10); text((b.kategori || '').slice(0, 20), MARGIN + 300, y, 10)
-      right(fortegn + kr(b.beloeb), W - MARGIN, y, 10); y -= 15
+      right(fortegn + kr2(b.beloeb), W - MARGIN, y, 10); y -= 15
     })
   }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, kr } from '../lib/format.js'
+import { parseNum, kr, daNum } from '../lib/format.js'
 import { NumberField, TextField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
@@ -215,6 +215,10 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
 
 function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata }) {
   const pro = erProrata(saet, gruppe, felt)
+  const raw = saet[gruppe][felt]
+  const [text, setText] = useState(() => (raw ? daNum(raw) : ''))
+  const [focus, setFocus] = useState(false)
+  useEffect(() => { if (!focus) setText(raw ? daNum(raw) : '') }, [raw, focus])
   return (
     <div className="field">
       <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -227,8 +231,10 @@ function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata
       <div className="input-suffix">
         <input
           type="text" inputMode="decimal"
-          value={saet[gruppe][felt] || ''}
-          onChange={e => setField(gruppe, felt, e.target.value)}
+          value={text}
+          onChange={e => { setText(e.target.value); setField(gruppe, felt, e.target.value) }}
+          onFocus={() => setFocus(true)}
+          onBlur={() => setFocus(false)}
           style={{ paddingRight: 54 }}
         />
         <span className="suffix">{pro ? 'kr./md' : 'kr.'}</span>

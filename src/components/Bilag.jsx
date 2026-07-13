@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api.js'
-import { kr, parseNum } from '../lib/format.js'
+import { kr2, parseNum } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
 const KATEGORIER = [
@@ -83,7 +83,7 @@ export default function Bilag({ years }) {
                 ))}
                 <tr className="total">
                   <td colSpan={4}>Netto (indtægt − udgift)</td>
-                  <td className="num">{kr(total)}</td>
+                  <td className="num">{kr2(total)}</td>
                   <td colSpan={2}></td>
                 </tr>
               </tbody>
@@ -133,7 +133,7 @@ function UploadForm({ aar, onDone }) {
         <TextField label="Dato" type="date" value={meta.dato} onChange={v => setMeta({ ...meta, dato: v })} />
         <SelectField label="Kategori" value={meta.kategori} onChange={v => setMeta({ ...meta, kategori: v })} options={KATEGORIER} />
         <TextField label="Tekst / beskrivelse" value={meta.tekst} onChange={v => setMeta({ ...meta, tekst: v })} placeholder="fx VVS-reparation, faktura 1234" />
-        <NumberField label="Beløb" value={meta.beloeb} onChange={v => setMeta({ ...meta, beloeb: parseNum(v) })} />
+        <NumberField label="Beløb" value={meta.beloeb || ''} onChange={v => setMeta({ ...meta, beloeb: parseNum(v) })} />
       </div>
       <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
         <button className="btn primary" onClick={gem} disabled={gemmer || !file}>{gemmer ? 'Uploader…' : 'Tilføj bilag'}</button>
@@ -154,7 +154,7 @@ function BilagRow({ b, onDone }) {
       <td>{b.dato}</td>
       <td>{b.tekst}</td>
       <td>{b.kategori}</td>
-      <td className="num">{kr(b.beloeb)}</td>
+      <td className="num">{kr2(b.beloeb)}</td>
       <td>
         {b.filsti ? (
           <a href={filUrl} target="_blank" rel="noreferrer" title={b.filnavn}>

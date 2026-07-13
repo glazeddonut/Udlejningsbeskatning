@@ -1,4 +1,6 @@
 // Genbrugelige formular-felter. Holder styling og markup ensartet på tværs af faner.
+import { useState, useEffect } from 'react'
+import { daNum } from '../lib/format.js'
 
 export function TextField({ label, hint, value, onChange, type = 'text', placeholder }) {
   return (
@@ -14,8 +16,13 @@ export function TextField({ label, hint, value, onChange, type = 'text', placeho
   )
 }
 
-// Talfelt med enhed-suffiks (fx "kr.", "%", "dage"). Værdien holdes som streng under redigering.
+// Talfelt med enhed-suffiks (fx "kr.", "%", "dage"). Holder rå tekst under redigering,
+// så decimaler (fx "1250,50") kan tastes uden at blive normaliseret væk ved hvert tastetryk.
 export function NumberField({ label, hint, value, onChange, suffix = 'kr.' }) {
+  const [text, setText] = useState(() => daNum(value))
+  const [focus, setFocus] = useState(false)
+  // Synk fra prop når feltet ikke er i fokus (fanger eksterne ændringer, fx "Kopiér fra budget").
+  useEffect(() => { if (!focus) setText(daNum(value)) }, [value, focus])
   return (
     <div className="field">
       {label && <label>{label} {hint && <span className="hint">· {hint}</span>}</label>}
@@ -23,8 +30,10 @@ export function NumberField({ label, hint, value, onChange, suffix = 'kr.' }) {
         <input
           type="text"
           inputMode="decimal"
-          value={value ?? ''}
-          onChange={e => onChange(e.target.value)}
+          value={text}
+          onChange={e => { setText(e.target.value); onChange(e.target.value) }}
+          onFocus={() => setFocus(true)}
+          onBlur={() => setFocus(false)}
           style={{ paddingRight: `${Math.max(42, String(suffix).length * 9 + 22)}px` }}
         />
         <span className="suffix">{suffix}</span>
