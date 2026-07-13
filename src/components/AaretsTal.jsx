@@ -139,6 +139,14 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
   const sletAar = async () => {
     if (confirm(`Slet hele året ${year.aar}?`)) { await api.del(`/years/${year.id}`); setValgtAar(null); reload() }
   }
+  // Kopiér budgettets (forskuds-)tal over i de faktiske (selvangivelses-)tal.
+  const kopierFraBudget = () => {
+    const f = year.faktisk
+    const harData = sumIndtaegter(f) || sumFradragsUdgifter(f) || sumRenter(f)
+    if (harData && !confirm('Overskriv de faktiske tal med budgettets tal?')) return
+    setYear(prev => ({ ...prev, faktisk: JSON.parse(JSON.stringify(prev.budget)) }))
+    setDirty(true)
+  }
 
   return (
     <>
@@ -177,6 +185,9 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
           )}
           {year && !visOpret && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {mode === 'faktisk' && (
+                <button className="btn ghost" onClick={kopierFraBudget} title="Kopiér budgettets tal over i de faktiske tal">⧉ Kopiér fra budget</button>
+              )}
               <button className={`btn ${mode === 'budget' ? 'primary' : 'ghost'}`} onClick={() => setMode('budget')}>Budget (forskud)</button>
               <button className={`btn ${mode === 'faktisk' ? 'primary' : 'ghost'}`} onClick={() => setMode('faktisk')}>Faktisk (selvangivelse)</button>
             </div>
