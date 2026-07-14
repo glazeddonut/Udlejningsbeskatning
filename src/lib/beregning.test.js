@@ -4,7 +4,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
-  periodeForAar, prorataMaaneder,
+  periodeForAar, prorataMaaneder, leaseForAar,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -174,6 +174,22 @@ test('periodeForAar: klipper lejeperioden til året', () => {
   assert.deepEqual(periodeForAar(lease, 2026), ['2026-01-01', '2026-12-31'])
   const lease2 = { startdato: '2025-08-05', slutdato: '2027-06-15' }
   assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
+})
+
+test('leaseForAar: vælger den kontrakt der er aktiv i året', () => {
+  const l1 = { id: 1, startdato: '2025-08-05', slutdato: '2027-07-31', maanedlig_leje: 10000 }
+  const l2 = { id: 2, startdato: '2027-08-01', maanedlig_leje: 11000 }   // åben slutdato
+  const leases = [l1, l2]
+  // Rene år: kun én kontrakt dækker
+  assert.equal(leaseForAar(leases, 2026)?.id, 1)
+  assert.equal(leaseForAar(leases, 2028)?.id, 2)
+  // Delt år 2027: l1 dækker jan–jul (212 dage), l2 aug–dec (153 dage) → l1 vinder
+  assert.equal(leaseForAar(leases, 2027)?.id, 1)
+  // År uden dækning → null
+  assert.equal(leaseForAar(leases, 2024), null)
+  // Robusthed: tomt/ugyldigt input
+  assert.equal(leaseForAar([], 2026), null)
+  assert.equal(leaseForAar(null, 2026), null)
 })
 
 test('prorataMaaneder: delmåned tæller forholdsmæssigt (5.–31. aug + fulde mdr)', () => {

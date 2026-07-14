@@ -4,7 +4,7 @@ import LaanManager from './LaanManager.jsx'
 import LejekontraktManager from './LejekontraktManager.jsx'
 
 // Samler de persistente stamdata: ejere, lejlighed, lån og lejekontrakt.
-export default function Stamdata({ persons, property, loans, lease, reload }) {
+export default function Stamdata({ persons, property, loans, leases, reload }) {
   return (
     <>
       <div className="page-header">
@@ -16,7 +16,7 @@ export default function Stamdata({ persons, property, loans, lease, reload }) {
       <EjereManager persons={persons} reload={reload} />
       <EjendomStamdata key={`ejendom-${property ? 'har' : 'tom'}`} property={property} persons={persons} reload={reload} />
       <LaanManager loans={loans} persons={persons} reload={reload} />
-      <LejekontraktManager key={`lease-${lease ? 'har' : 'tom'}`} lease={lease} reload={reload} />
+      <LejekontraktManager leases={leases} reload={reload} />
     </>
   )
 }

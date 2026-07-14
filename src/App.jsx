@@ -23,7 +23,7 @@ export default function App() {
   const [persons, setPersons] = useState([])
   const [property, setProperty] = useState(null)
   const [loans, setLoans] = useState([])
-  const [lease, setLease] = useState(null)
+  const [leases, setLeases] = useState([])
   const [years, setYears] = useState([])
   const [settings, setSettings] = useState(null)
   const [fieldMappings, setFieldMappings] = useState({})
@@ -45,11 +45,11 @@ export default function App() {
   }
 
   const fetchData = useCallback(async () => {
-    const [persRes, propRes, loanRes, leaseRes, yearRes, setRes, fmRes] = await Promise.all([
+    const [persRes, propRes, loanRes, leasesRes, yearRes, setRes, fmRes] = await Promise.all([
       fetch('/api/persons'),
       fetch('/api/property'),
       fetch('/api/loans'),
-      fetch('/api/lease'),
+      fetch('/api/leases'),
       fetch('/api/years'),
       fetch('/api/settings'),
       fetch('/api/field-mappings'),
@@ -57,7 +57,7 @@ export default function App() {
     setPersons(await persRes.json())
     setProperty(await propRes.json())
     setLoans(await loanRes.json())
-    setLease(await leaseRes.json())
+    setLeases(await leasesRes.json())
     setYears(await yearRes.json())
     setSettings(await setRes.json())
     setFieldMappings(await fmRes.json())
@@ -95,13 +95,13 @@ export default function App() {
       <main className="container">
         {!loaded && <div className="empty-state">Henter data…</div>}
         {loaded && activeTab === 'overblik' && (
-          <Overblik persons={persons} property={property} loans={loans} lease={lease} years={years} settings={settings} onGoto={setActiveTab} />
+          <Overblik persons={persons} property={property} loans={loans} leases={leases} years={years} settings={settings} onGoto={setActiveTab} />
         )}
         {loaded && activeTab === 'stamdata' && (
-          <Stamdata persons={persons} property={property} loans={loans} lease={lease} reload={fetchData} />
+          <Stamdata persons={persons} property={property} loans={loans} leases={leases} reload={fetchData} />
         )}
         {loaded && activeTab === 'aaret' && (
-          <AaretsTal years={years} persons={persons} property={property} loans={loans} lease={lease} settings={settings} reload={fetchData} />
+          <AaretsTal years={years} persons={persons} property={property} loans={loans} leases={leases} settings={settings} reload={fetchData} />
         )}
         {loaded && activeTab === 'skat' && (
           <SkatteIndberetning years={years} persons={persons} property={property} loans={loans} fieldMappings={fieldMappings} settings={settings} reload={fetchData} />

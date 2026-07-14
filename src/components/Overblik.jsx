@@ -1,9 +1,9 @@
 import { kr } from '../lib/format.js'
 import { normaliserSaet } from '../lib/saet.js'
-import { resultatFoerRenter, personOpgoerelse, markedslejeTjek, resolveFordeling } from '../lib/beregning.js'
+import { resultatFoerRenter, personOpgoerelse, markedslejeTjek, resolveFordeling, leaseForAar } from '../lib/beregning.js'
 
 // Forside: status på stamdata, markedsleje-tjek, seneste års nøgletal og påmindelser.
-export default function Overblik({ persons, property, loans, lease, years, settings, onGoto }) {
+export default function Overblik({ persons, property, loans, leases, years, settings, onGoto }) {
   const sorterede = [...years].sort((a, b) => b.aar - a.aar)
   const senesteAar = sorterede[0]
   const saet = senesteAar ? normaliserSaet(senesteAar.faktisk) : null
@@ -12,9 +12,12 @@ export default function Overblik({ persons, property, loans, lease, years, setti
   if (persons.length < 2) mangler.push('ejere')
   if (!property) mangler.push('lejlighed')
   if (loans.length === 0) mangler.push('lån')
-  if (!lease) mangler.push('lejekontrakt')
+  if (!leases || leases.length === 0) mangler.push('lejekontrakt')
 
-  const mlt = lease ? markedslejeTjek(lease, settings?.markedsleje_advarsel_pct ?? 5) : null
+  // Markedsleje-tjekket køres mod den kontrakt der er aktiv i seneste år (ellers i år).
+  const tjekAar = senesteAar?.aar ?? new Date().getFullYear()
+  const aktivLease = leaseForAar(leases, tjekAar)
+  const mlt = aktivLease ? markedslejeTjek(aktivLease, settings?.markedsleje_advarsel_pct ?? 5) : null
   // Gave-vurdering: forskellen mellem markedsleje og aftalt leje er et muligt gaveelement
   // fra ejerne til datteren. To ejere → sammenlign med 2× bundgrænse (grov rettesnor).
   const bundgraense = settings?.gaveafgift_bundgraense ?? 0

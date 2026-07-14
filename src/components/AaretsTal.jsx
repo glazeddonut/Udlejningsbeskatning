@@ -6,20 +6,27 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
   antalMaaneder, udlejningsdage, erProrata, effektivBeloeb, estimeretAarligRente, periodeForAar,
-  prorataMaaneder,
+  prorataMaaneder, leaseForAar,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
-// År udledt af lejekontrakten: [minÅr, maxÅr]. maxÅr = null hvis lejemålet er åbent (ingen slutdato).
-function tilladteAar(lease) {
-  const min = lease?.startdato ? Number(lease.startdato.slice(0, 4)) : null
-  const max = lease?.slutdato ? Number(lease.slutdato.slice(0, 4)) : null
+// År udledt af lejekontrakterne: [minÅr, maxÅr]. Tidligste start → seneste slut.
+// maxÅr = null hvis mindst én kontrakt er åben (ingen slutdato).
+function tilladteAar(leases) {
+  const liste = leases || []
+  const starter = liste.map(l => l.startdato).filter(Boolean).map(d => Number(d.slice(0, 4)))
+  const slutter = liste.map(l => l.slutdato).filter(Boolean).map(d => Number(d.slice(0, 4)))
+  const aabenSlut = liste.length > 0 && slutter.length < liste.length
+  const min = starter.length ? Math.min(...starter) : null
+  const max = aabenSlut || !slutter.length ? null : Math.max(...slutter)
   return [min, max]
 }
 
 // Nyt talsæt med fornuftige defaults fra stamdata (leje, forbrug, grundskyld).
-function prefillSaet({ lease, property, loans, aar }) {
+function prefillSaet({ leases, property, loans, aar }) {
   const s = tomtSaet()
+  // Den kontrakt der er aktiv i året styrer periode og leje.
+  const lease = leaseForAar(leases, aar)
   // Udlejningsperioden udledes fra lejekontrakten, klippet til året.
   const [fra, til] = periodeForAar(lease, aar)
   s.fra_dato = fra
@@ -61,7 +68,7 @@ const UDGIFT_FELTER = [
   ['andet', 'Andet', ''],
 ]
 
-export default function AaretsTal({ years, persons, property, loans, lease, settings, reload }) {
+export default function AaretsTal({ years, persons, property, loans, leases, settings, reload }) {
   const sorterede = [...years].sort((a, b) => b.aar - a.aar)
   const [valgtAar, setValgtAar] = useState(sorterede[0]?.aar ?? null)
   const [mode, setMode] = useState('budget')  // budget = forskud, faktisk = selvangivelse
@@ -82,7 +89,7 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
     }
   }, [valgtAar, years])
 
-  const [minAar, maxAar] = tilladteAar(lease)
+  const [minAar, maxAar] = tilladteAar(leases)
   const startOpret = () => {
     let forslag = sorterede[0] ? sorterede[0].aar + 1 : (minAar || new Date().getFullYear())
     if (minAar && forslag < minAar) forslag = minAar
@@ -94,10 +101,10 @@ export default function AaretsTal({ years, persons, property, loans, lease, sett
   const bekraeftOpret = async () => {
     const aar = Number(nyAar)
     if (!aar || aar < 1900 || aar > 2200) { setOpretFejl('Angiv et gyldigt årstal.'); return }
-    if (minAar && aar < minAar) { setOpretFejl(`Lejekontrakten starter i ${minAar} — tidligere år kan ikke oprettes.`); return }
+    if (minAar && aar < minAar) { setOpretFejl(`Lejekontrakterne starter i ${minAar} — tidligere år kan ikke oprettes.`); return }
     if (maxAar && aar > maxAar) { setOpretFejl(`Lejemålet slutter i ${maxAar} — senere år kan ikke oprettes.`); return }
     if (years.find(y => y.aar === aar)) { setOpretFejl('Året findes allerede.'); return }
-    const start = prefillSaet({ lease, property, loans, aar })
+    const start = prefillSaet({ leases, property, loans, aar })
     await api.post('/years', { aar, budget: start, faktisk: start })
     setVisOpret(false)
     setValgtAar(aar)

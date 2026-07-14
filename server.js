@@ -24,14 +24,15 @@ const DEFAULT_SETTINGS = {
 const emptyDb = () => ({
   persons: [],          // { id, navn, cpr, rolle: 'udlejer' | 'medejer' }
   property: null,       // singleton
-  loans: [],            // { id, type, laangiver, hovedstol, restgaeld, rente_pct, haeftelse{} }
-  lease: null,          // singleton (lejekontrakt til datteren)
+  loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse{} }
+  leases: [],           // lejekontrakter til datteren (én aktiv pr. år) { id, startdato, slutdato, maanedlig_leje, ... }
   years: [],            // { id, aar, budget:{...}, faktisk:{...} }
   bilag: [],            // { id, aar, nummer, dato, tekst, beloeb, kategori, type, filnavn, mimetype, filsti }
   settings: { ...DEFAULT_SETTINGS },
   field_mappings: {},   // overrides: { "2026-forskud": [ {felt_nr,label,kilde} ] }; tom = brug defaults i frontend
   nextPersonId: 1,
   nextLoanId: 1,
+  nextLeaseId: 1,
   nextYearId: 1,
   nextBilagId: 1,
 })
@@ -46,13 +47,17 @@ function loadDb() {
     if (!db.loans) db.loans = []
     if (!db.years) db.years = []
     if (db.property === undefined) db.property = null
-    if (db.lease === undefined) db.lease = null
     if (!db.field_mappings) db.field_mappings = {}
     if (!db.bilag) db.bilag = []
     if (!db.nextPersonId) db.nextPersonId = 1
     if (!db.nextLoanId) db.nextLoanId = 1
     if (!db.nextYearId) db.nextYearId = 1
     if (!db.nextBilagId) db.nextBilagId = 1
+
+    // Migrér singleton-lejekontrakt → liste af kontrakter (én aktiv pr. år).
+    if (!db.leases) db.leases = []
+    if (db.lease) { db.leases.push({ id: db.leases.length + 1, ...db.lease }); delete db.lease }
+    if (!db.nextLeaseId) db.nextLeaseId = db.leases.reduce((m, l) => Math.max(m, l.id || 0), 0) + 1
 
     // Merge settings med defaults (tilføjer nye nøgler hvis de mangler)
     db.settings = { ...DEFAULT_SETTINGS, ...(db.settings ?? {}) }
@@ -116,13 +121,14 @@ app.get('/api/loans', (req, res) => {
 })
 app.post('/api/loans', (req, res) => {
   const db = loadDb()
-  const { type, laangiver, hovedstol, restgaeld, rente_pct, haeftelse } = req.body
+  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse } = req.body
   const loan = {
     id: db.nextLoanId++,
     type: type ?? 'realkredit',
     laangiver: laangiver ?? '',
     hovedstol: hovedstol ?? 0,
     restgaeld: restgaeld ?? 0,
+    restgaeld_dato: restgaeld_dato ?? '',   // peildato for restgælden (fx bankens 31/12-indberetning)
     rente_pct: rente_pct ?? 0,
     haeftelse: haeftelse ?? {},   // { personId: pct }
   }
@@ -132,11 +138,12 @@ app.post('/api/loans', (req, res) => {
 })
 app.put('/api/loans/:id', (req, res) => {
   const db = loadDb()
-  const { type, laangiver, hovedstol, restgaeld, rente_pct, haeftelse } = req.body
+  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse } = req.body
   const l = db.loans.find(l => l.id === Number(req.params.id))
   if (l) {
     l.type = type; l.laangiver = laangiver; l.hovedstol = hovedstol
-    l.restgaeld = restgaeld; l.rente_pct = rente_pct; l.haeftelse = haeftelse ?? {}
+    l.restgaeld = restgaeld; l.restgaeld_dato = restgaeld_dato ?? ''
+    l.rente_pct = rente_pct; l.haeftelse = haeftelse ?? {}
   }
   saveDb(db)
   res.json({ success: true })
@@ -148,15 +155,29 @@ app.delete('/api/loans/:id', (req, res) => {
   res.json({ success: true })
 })
 
-// ── Lease (singleton — lejekontrakt) ─────────────────
-app.get('/api/lease', (req, res) => {
-  res.json(loadDb().lease)
+// ── Leases (lejekontrakter — én aktiv pr. år) ────────
+app.get('/api/leases', (req, res) => {
+  res.json(loadDb().leases)
 })
-app.put('/api/lease', (req, res) => {
+app.post('/api/leases', (req, res) => {
   const db = loadDb()
-  db.lease = req.body ?? null
+  const lease = { id: db.nextLeaseId++, ...(req.body ?? {}) }
+  db.leases.push(lease)
   saveDb(db)
-  res.json(db.lease)
+  res.json(lease)
+})
+app.put('/api/leases/:id', (req, res) => {
+  const db = loadDb()
+  const idx = db.leases.findIndex(l => l.id === Number(req.params.id))
+  if (idx !== -1) db.leases[idx] = { ...db.leases[idx], ...(req.body ?? {}), id: db.leases[idx].id }
+  saveDb(db)
+  res.json({ success: true })
+})
+app.delete('/api/leases/:id', (req, res) => {
+  const db = loadDb()
+  db.leases = db.leases.filter(l => l.id !== Number(req.params.id))
+  saveDb(db)
+  res.json({ success: true })
 })
 
 // ── Years (årets tal) ────────────────────────────────
@@ -169,12 +190,17 @@ app.post('/api/years', (req, res) => {
   const aarN = Number(aar)
   if (db.years.find(y => y.aar === aarN))
     return res.status(400).json({ error: 'Året findes allerede' })
-  // Lejekontrakten afgør hvilke år der kan oprettes.
-  const ls = db.lease?.startdato, le = db.lease?.slutdato
-  if (ls && aarN < Number(ls.slice(0, 4)))
-    return res.status(400).json({ error: `Lejekontrakten starter i ${ls.slice(0, 4)} — tidligere år kan ikke oprettes` })
-  if (le && aarN > Number(le.slice(0, 4)))
-    return res.status(400).json({ error: `Lejemålet slutter i ${le.slice(0, 4)} — senere år kan ikke oprettes` })
+  // Lejekontrakterne afgør hvilke år der kan oprettes: tidligste start → seneste slut.
+  const starter = db.leases.map(l => l.startdato).filter(Boolean)
+  const slutter = db.leases.map(l => l.slutdato).filter(Boolean)
+  const minAar = starter.length ? Math.min(...starter.map(d => Number(d.slice(0, 4)))) : null
+  // Åben slutdato på mindst én kontrakt → ingen øvre grænse.
+  const aabenSlut = db.leases.length > 0 && slutter.length < db.leases.length
+  const maxAar = aabenSlut || !slutter.length ? null : Math.max(...slutter.map(d => Number(d.slice(0, 4))))
+  if (minAar !== null && aarN < minAar)
+    return res.status(400).json({ error: `Lejekontrakterne starter i ${minAar} — tidligere år kan ikke oprettes` })
+  if (maxAar !== null && aarN > maxAar)
+    return res.status(400).json({ error: `Lejemålet slutter i ${maxAar} — senere år kan ikke oprettes` })
   const year = { id: db.nextYearId++, aar: Number(aar), budget: budget ?? {}, faktisk: faktisk ?? {} }
   db.years.push(year)
   saveDb(db)
@@ -223,9 +249,18 @@ app.put('/api/field-mappings', (req, res) => {
 
 // ── Bilag ────────────────────────────────────────────
 // Liste (metadata only; filsti udelades ikke, men filen hentes separat).
+// Bilag nummereres gapfrit 1..n pr. år i oprettelsesrækkefølge (id) — beregnet ved
+// læsning, så et slettet bilag ikke efterlader et "hul" i listen og regnskabs-PDF'en.
+function medLoebenummer(bilagListe) {
+  const tael = {}
+  return [...bilagListe]
+    .sort((a, b) => a.id - b.id)
+    .map(b => ({ ...b, nummer: (tael[b.aar] = (tael[b.aar] || 0) + 1) }))
+}
+
 app.get('/api/bilag', (req, res) => {
   const aar = req.query.aar ? Number(req.query.aar) : null
-  let liste = loadDb().bilag
+  let liste = medLoebenummer(loadDb().bilag)
   if (aar) liste = liste.filter(b => b.aar === aar)
   res.json(liste)
 })

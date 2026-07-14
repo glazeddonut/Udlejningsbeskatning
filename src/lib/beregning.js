@@ -37,6 +37,22 @@ function parseDato(s) {
   return isNaN(d.getTime()) ? null : d
 }
 
+// Vælger den lejekontrakt der er aktiv i et givet år (én aktiv pr. år). Ved
+// overlap vælges den kontrakt der dækker flest af årets dage. null hvis ingen.
+export function leaseForAar(leases, aar) {
+  const liste = Array.isArray(leases) ? leases : (leases ? [leases] : [])
+  const ys = `${aar}-01-01`, ye = `${aar}-12-31`
+  let bedst = null, bedstDage = -1
+  for (const l of liste) {
+    const ls = l?.startdato || ys, le = l?.slutdato || ye
+    const fra = ls > ys ? ls : ys, til = le < ye ? le : ye
+    if (fra > til) continue                     // ingen overlap med året
+    const dage = udlejningsdage({ fra_dato: fra, til_dato: til })
+    if (dage > bedstDage) { bedst = l; bedstDage = dage }
+  }
+  return bedst
+}
+
 // Udlejningsperioden for et år, klippet til året, udledt af lejekontrakten.
 // Returnerer [fra_dato, til_dato] som ISO-strenge.
 export function periodeForAar(lease, aar) {

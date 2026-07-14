@@ -59,9 +59,12 @@ Appen er et hjælpeværktøj, ikke skatterådgivning.
 
 ## Datamodel (JSON DB)
 
-`persons` (2 ægtefæller), `property` (singleton, m. ejerandele), `loans` (m. hæftelse),
-`lease` (singleton, m. startdato/slutdato), `years` (pr. år med `budget`=forskud og
-`faktisk`=selvangivelse), `bilag` (m. filsti på disk), `settings`, `field_mappings`.
+`persons` (2 ægtefæller), `property` (singleton, m. ejerandele), `loans` (m. hæftelse
+og `restgaeld` + `restgaeld_dato` = peildato for saldoen), `leases` (liste af
+lejekontrakter, hver m. startdato/slutdato — én aktiv pr. år via `leaseForAar`),
+`years` (pr. år med `budget`=forskud og `faktisk`=selvangivelse), `bilag`
+(m. filsti på disk), `settings`, `field_mappings`. (Ældre DB'er med `lease`-singleton
+migreres automatisk til `leases` i `loadDb`.)
 
 Hvert års-talsæt (budget/faktisk): `fra_dato`/`til_dato` (udlejningsperiode, udledt fra
 lejekontrakten), `indtaegter`, `udgifter`, `prorata` (pr. felt: månedsbeløb × forholdsmæssige
@@ -78,8 +81,14 @@ måneder), `renteudgifter` (pr. lån), `udlejet_andel_pct`, `naertstaaende`.
 
 ## Vigtige domæne-detaljer
 
-- **Lejekontrakten styrer:** hvilke år der kan oprettes (`[startår, slutår]`), og hver års
-  udlejningsperiode (`periodeForAar` klipper til året; delår som 5. aug håndteres dag-præcist).
+- **Lejekontrakterne styrer:** hvilke år der kan oprettes (tidligste start → seneste slut
+  på tværs af kontrakter; åben slutdato = ingen øvre grænse), og hver års udlejningsperiode.
+  `leaseForAar` vælger den kontrakt der er aktiv i året (ved delt år vinder den med flest dage);
+  `periodeForAar` klipper til året (delår som 5. aug håndteres dag-præcist). Antagelse: én leje
+  pr. år (ikke lejeskift midt i et skatteår).
+- **Restgæld er et øjebliksbillede, ikke stamdata:** den falder for hvert afdrag. Lånet har
+  derfor en eksplicit `restgaeld_dato` (peildato, default seneste årsskifte), ikke en hardkodet
+  31/12. Bruges kun som prefill-skøn til renten (`estimeretAarligRente`).
 - **Pro rata er forholdsmæssig efter dage** (dansk lejeret): delmåned tæller forholdsmæssigt
   (5.–31. aug = 27/31), ikke som hel måned.
 - **Beløb tastes med dansk decimalkomma** (1250,50). Talfelter holder rå tekst under redigering.
