@@ -101,3 +101,20 @@ måneder), `renteudgifter` (pr. lån), `udlejet_andel_pct`, `naertstaaende`.
 - Inkrementelt: store features i små, testbare trin.
 - **Commit/push kun når brugeren beder om det.** Co-author-trailer bruges.
   `udlejning-data.json` og `bilag/` er git-ignored og må ALDRIG committes.
+
+## Agent skills
+
+### Issue tracker
+
+Issues spores som GitHub Issues i `glazeddonut/Udlejningsbeskatning` via `gh` CLI.
+Se `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Standard-vokabular: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. Se `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` i repo-roden (ingen af dem findes endnu —
+oprettes først når de bliver relevante). Se `docs/agents/domain.md`.
