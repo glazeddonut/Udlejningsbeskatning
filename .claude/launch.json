@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:server"],
+      "port": 3002
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port", "5174"],

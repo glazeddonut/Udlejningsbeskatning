@@ -5,7 +5,7 @@ import { NumberField, TextField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
-  antalMaaneder, udlejningsdage, erProrata, effektivBeloeb, estimeretAarligRente, periodeForAar,
+  antalMaaneder, udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente, periodeForAar,
   prorataMaaneder, leaseForAar,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
@@ -268,7 +268,12 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
           <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
         </div>
         <p className="muted" style={{ marginTop: 10 }}>
-          <strong>{udlejningsdage(saet)} udlejningsdage</strong> ({pmdr.toLocaleString('da-DK', { maximumFractionDigits: 2 })} måneder til pro rata-fordeling)
+          <strong>{udlejningsdage(saet)} udlejningsdage</strong> (faktiske kalenderdage) · {pmdr.toLocaleString('da-DK', { maximumFractionDigits: 2 })} måneder til pro rata-fordeling
+        </p>
+        {/* SKAT regner disse dagsfelter i 30/360 — vis begge tal, så forskellen er synlig ved indtastning. */}
+        <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+          Til skat.dk (felt 748 / rubrik 207): <strong>{udlejningsdage360(saet)} dage</strong> — skemaet regner
+          en kalendermåned som 30 dage og indkomståret som 360 dage.
         </p>
       </div>
 

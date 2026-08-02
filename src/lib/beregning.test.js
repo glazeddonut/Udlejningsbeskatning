@@ -4,7 +4,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
-  periodeForAar, prorataMaaneder, leaseForAar,
+  periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -174,6 +174,19 @@ test('periodeForAar: klipper lejeperioden til året', () => {
   assert.deepEqual(periodeForAar(lease, 2026), ['2026-01-01', '2026-12-31'])
   const lease2 = { startdato: '2025-08-05', slutdato: '2027-06-15' }
   assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
+})
+
+test('udlejningsdage360: SKATs 30/360-konvention (md = 30 dage, år = 360)', () => {
+  // Fuldt år = præcis 360, ikke 365 — jf. fodnoten på felt 748 / rubrik 207
+  assert.equal(udlejningsdage360({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 360)
+  // 5. aug–31. dec: aug bidrager 26 dage (5.-30.), sep-dec 4×30 = 120 → 146
+  assert.equal(udlejningsdage360({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 146)
+  // Skarpt skilt fra den kalenderbaserede optælling, som giver 149
+  assert.equal(udlejningsdage({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 149)
+  // Skudår ændrer ikke 30/360-tallet
+  assert.equal(udlejningsdage360({ fra_dato: '2024-01-01', til_dato: '2024-12-31' }), 360)
+  // Manglende datoer falder tilbage til måneder × 30 (allerede 30/360)
+  assert.equal(udlejningsdage360({}), 360)
 })
 
 test('leaseForAar: vælger den kontrakt der er aktiv i året', () => {

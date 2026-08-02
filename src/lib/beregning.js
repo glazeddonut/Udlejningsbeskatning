@@ -75,6 +75,19 @@ export function antalMaaneder(saet) {
   return Math.max(0, til - fra + 1)
 }
 
+// Antal udlejningsdage efter SKATs 30/360-konvention: en kalendermåned regnes som
+// 30 dage og indkomståret som 360 dage. Det er den konvention fodnoten på felt 748
+// (forskud) og rubrik 207 (årsopgørelse) foreskriver — se CLAUDE.md.
+// Bruges KUN til indberetning; pro rata af beløb er dagsproportional (prorataMaaneder).
+export function udlejningsdage360(saet) {
+  const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
+  if (!f || !t) return antalMaaneder(saet) * 30   // manglende datoer: allerede 30-dages-måneder
+  const d1 = Math.min(f.getDate(), 30), d2 = Math.min(t.getDate(), 30)
+  const dage = (t.getFullYear() - f.getFullYear()) * 360
+    + (t.getMonth() - f.getMonth()) * 30 + (d2 - d1) + 1
+  return Math.max(0, dage)
+}
+
 // Antal udlejningsdage (faktiske kalenderdage, inklusiv start og slut).
 // Falder tilbage til 30-dages-måneder hvis datoer mangler (fuldt år = 360).
 export function udlejningsdage(saet) {

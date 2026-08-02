@@ -54,8 +54,39 @@ vs. ikke-beskattet). Verificeret mod skat.dk (juli 2026):
 - **Forskud:** 221/435 (overskud/underskud, betinget), 481 (reducér bankrenter) + 488
   (renter i virksomhed), 748 (udlejningsdage), 744 (udlejet andel), 699 (nærtstående).
 - **Selvangivelse:** 42 + 117 (renter), 111/112 (overskud/underskud), 207 (udlejningsdage),
-  699, samt 300/638/301-302 (regnskabsoplysninger). 71 og beskatningsform mangler endelig bekræftelse.
+  699, samt 300/638/301-302 (regnskabsoplysninger).
 Appen er et hjælpeværktøj, ikke skatterådgivning.
+
+### Tre faldgruber ved verifikation af feltnumre (lært på den hårde måde)
+
+1. **Samme nummer betyder forskellige ting i forskudsopgørelse og årsopgørelse.** Et felt SKAL
+   altid verificeres inden for sin egen opgørelse. Datamodellen har skelnen indbygget
+   (`forskud` og `selvangivelse` er adskilte lister) — bevar den.
+2. **"Rubrik" og "felt nr." er ikke det samme.** Skemaet viser rubriknummeret; UFSTs Bilag B
+   beskriver de interne feltnumre. Bilag B kan derfor **ikke** bruges til at be- eller afkræfte
+   et rubriknummer — de kolliderer (rubrik 207 = udlejningsdage, felt 207 = noget helt andet).
+3. **Skærmbillede fra TastSelv slår dokument-slutning.** Blanketter og vejledninger er
+   sekundære i forhold til, hvad der faktisk står i brugerens eget skema.
+
+Verificeret ved direkte observation i TastSelv (aug. 2026): **felt 748** (forskud) =
+"Erhvervsmæssig andel uden vurderingsfordeling, anfør antal dage"; **rubrik 207** (årsopgørelse)
+= "Flerårig erhvervsmæssig udlejning, anfør antal dage". Se
+`docs/research/skat-felt-71-og-beskatningsform.md` (m. rettelse).
+
+### To dagsbegreber — bland dem ALDRIG sammen
+
+Bekræftet af brugeren aug. 2026. Appen har med vilje to forskellige daglige optællinger:
+
+| Formål | Funktion | Konvention | Eksempel 5. aug–31. dec |
+|---|---|---|---|
+| **Indberetning til skat.dk** (felt 748 / rubrik 207) | `udlejningsdage360` | **30/360** — måned = 30 dage, år = 360 | **146** |
+| **Pro rata af beløb** (dansk lejeret) | `prorataMaaneder` | faktiske dage, delmåned forholdsmæssigt | 4,87 mdr. |
+| Visning/kontrol + `leaseForAar`s kontraktvalg | `udlejningsdage` | faktiske kalenderdage | 149 |
+
+Skemaet bærer selv fodnoten *"En kalendermåned udgør 30 dage og indkomståret 360 dage"*.
+Et helt år indberettes derfor som **360**, ikke 365. Omvendt må pro rata af husleje **ikke**
+regnes i 30/360 — den er lejeretlig og dagsproportional. Årets tal viser begge tal, så
+forskellen er synlig ved indtastning.
 
 ## Datamodel (JSON DB)
 
