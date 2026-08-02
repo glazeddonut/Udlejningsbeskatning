@@ -62,6 +62,39 @@ export function periodeForAar(lease, aar) {
   return [ls > ys ? ls : ys, le < ye ? le : ye]   // ISO-datoer sorterer leksikalsk
 }
 
+// Hvad lejekontrakterne siger om et år — den AFLEDTE sandhed, beregnet ved hvert
+// opslag. Modstykket til det gemte talsæt, som er et øjebliksbillede fra dengang
+// året blev oprettet. Bruges til prefill og til at opdage drift (periodeAfvigelse).
+export function aarsgrundlag(leases, aar) {
+  const lease = leaseForAar(leases, aar)
+  const [fra_dato, til_dato] = periodeForAar(lease, aar)
+  const periode = { fra_dato, til_dato }
+  return {
+    lease, fra_dato, til_dato,
+    maanedlig_leje: Number(lease?.maanedlig_leje) || 0,
+    vand: Number(lease?.forbrug_aconto?.vand) || 0,
+    varme: Number(lease?.forbrug_aconto?.varme) || 0,
+    dage: udlejningsdage(periode),
+    dage360: udlejningsdage360(periode),
+  }
+}
+
+// Afviger det gemte talsæts periode fra lejekontrakten? Returnerer null når de er
+// enige (eller der ingen kontrakt er at afstemme mod), ellers begge sæt tal.
+// En afvigelse er IKKE nødvendigvis en fejl — brugeren kan have overstyret bevidst
+// (fx faktisk indflytning en dag efter kontraktens start). Derfor rapporteres den,
+// den rettes ikke automatisk.
+export function periodeAfvigelse(saet, grundlag) {
+  if (!grundlag?.lease) return null
+  const fra = saet?.fra_dato || '', til = saet?.til_dato || ''
+  if (fra === grundlag.fra_dato && til === grundlag.til_dato) return null
+  const gemtPeriode = { fra_dato: fra, til_dato: til }
+  return {
+    gemt: { fra_dato: fra, til_dato: til, dage: udlejningsdage(gemtPeriode), dage360: udlejningsdage360(gemtPeriode) },
+    afledt: { fra_dato: grundlag.fra_dato, til_dato: grundlag.til_dato, dage: grundlag.dage, dage360: grundlag.dage360 },
+  }
+}
+
 // Antal kalendermåneder perioden berører (til pro rata). Datobaseret; falder tilbage
 // til gammelt måneds-format hvis datoer mangler.
 export function antalMaaneder(saet) {

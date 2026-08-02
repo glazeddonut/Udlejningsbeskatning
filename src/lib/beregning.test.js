@@ -5,6 +5,7 @@ import {
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
+  aarsgrundlag, periodeAfvigelse,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -174,6 +175,40 @@ test('periodeForAar: klipper lejeperioden til året', () => {
   assert.deepEqual(periodeForAar(lease, 2026), ['2026-01-01', '2026-12-31'])
   const lease2 = { startdato: '2025-08-05', slutdato: '2027-06-15' }
   assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
+})
+
+test('aarsgrundlag: udleder periode og leje fra den kontrakt der gælder i året', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', maanedlig_leje: 6000, forbrug_aconto: { vand: 200, varme: 300 } }]
+  const g = aarsgrundlag(leases, 2025)
+  assert.equal(g.fra_dato, '2025-08-05')
+  assert.equal(g.til_dato, '2025-12-31')
+  assert.equal(g.maanedlig_leje, 6000)
+  assert.equal(g.dage, 149)          // faktiske kalenderdage
+  assert.equal(g.dage360, 146)       // skemaets 30/360
+  // Uden kontrakt: hele året, ingen leje
+  const tom = aarsgrundlag([], 2025)
+  assert.equal(tom.lease, null)
+  assert.equal(tom.fra_dato, '2025-01-01')
+  assert.equal(tom.maanedlig_leje, 0)
+})
+
+test('periodeAfvigelse: opdager drift mellem gemt periode og lejekontrakt', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', maanedlig_leje: 6000 }]
+  const g = aarsgrundlag(leases, 2025)
+
+  // Enige → ingen afvigelse
+  assert.equal(periodeAfvigelse({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }, g), null)
+
+  // Den faktiske drift i brugerens DB: gemt 06-08, kontrakt 05-08
+  const a = periodeAfvigelse({ fra_dato: '2025-08-06', til_dato: '2025-12-31' }, g)
+  assert.ok(a, 'skal rapportere afvigelse')
+  assert.equal(a.gemt.dage, 148)
+  assert.equal(a.afledt.dage, 149)
+  assert.equal(a.gemt.dage360, 145)     // det tal der indberettes i dag
+  assert.equal(a.afledt.dage360, 146)   // det kontrakten giver
+
+  // Ingen kontrakt at afstemme mod → ingen afvigelse (ikke en fejl)
+  assert.equal(periodeAfvigelse({ fra_dato: '2025-03-01', til_dato: '2025-12-31' }, aarsgrundlag([], 2025)), null)
 })
 
 test('udlejningsdage360: SKATs 30/360-konvention (md = 30 dage, år = 360)', () => {

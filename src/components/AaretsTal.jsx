@@ -5,8 +5,8 @@ import { NumberField, TextField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling,
-  antalMaaneder, udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente, periodeForAar,
-  prorataMaaneder, leaseForAar,
+  antalMaaneder, udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
+  prorataMaaneder, aarsgrundlag, periodeAfvigelse,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
@@ -25,22 +25,20 @@ function tilladteAar(leases) {
 // Nyt talsæt med fornuftige defaults fra stamdata (leje, forbrug, grundskyld).
 function prefillSaet({ leases, property, loans, aar }) {
   const s = tomtSaet()
-  // Den kontrakt der er aktiv i året styrer periode og leje.
-  const lease = leaseForAar(leases, aar)
-  // Udlejningsperioden udledes fra lejekontrakten, klippet til året.
-  const [fra, til] = periodeForAar(lease, aar)
-  s.fra_dato = fra
-  s.til_dato = til
+  // Periode og leje udledes af den kontrakt der gælder i året (ét sted: aarsgrundlag).
+  const g = aarsgrundlag(leases, aar)
+  s.fra_dato = g.fra_dato
+  s.til_dato = g.til_dato
   // Renter estimeres fra lånenes restgæld × rente (budget-skøn; rettes med faktiske tal).
   ;(loans || []).forEach(l => { s.renteudgifter[l.id] = estimeretAarligRente(l) })
-  if (lease) {
+  if (g.lease) {
     // Løbende poster forudfyldes som MÅNEDSBELØB med pro rata slået til,
     // så udlejningsperioden automatisk styrer årets beløb.
-    s.indtaegter.leje = Number(lease.maanedlig_leje) || 0
-    s.indtaegter.vand = Number(lease.forbrug_aconto?.vand) || 0
-    s.indtaegter.varme = Number(lease.forbrug_aconto?.varme) || 0
-    s.udgifter.vand = Number(lease.forbrug_aconto?.vand) || 0
-    s.udgifter.varme = Number(lease.forbrug_aconto?.varme) || 0
+    s.indtaegter.leje = g.maanedlig_leje
+    s.indtaegter.vand = g.vand
+    s.indtaegter.varme = g.varme
+    s.udgifter.vand = g.vand
+    s.udgifter.varme = g.varme
     s.prorata = {
       'indtaegter.leje': true, 'indtaegter.vand': true, 'indtaegter.varme': true,
       'udgifter.vand': true, 'udgifter.varme': true,
@@ -121,6 +119,11 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     })
     setDirty(true)
   }
+  // Sæt begge datoer på én gang — til "brug lejekontraktens periode".
+  const setPeriode = (fra, til) => {
+    setYear(prev => ({ ...prev, [mode]: { ...prev[mode], fra_dato: fra, til_dato: til } }))
+    setDirty(true)
+  }
   const setRente = (loanId, v) => {
     setYear(prev => ({
       ...prev,
@@ -154,6 +157,11 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     setYear(prev => ({ ...prev, faktisk: JSON.parse(JSON.stringify(prev.budget)) }))
     setDirty(true)
   }
+
+  // Årets gemte periode er et øjebliksbillede fra dengang året blev oprettet; kontrakten
+  // kan være rettet siden. Vi afleder på ny ved hvert opslag og rapporterer forskellen —
+  // uden at rette automatisk, da overstyringen kan være bevidst.
+  const grundlag = year ? aarsgrundlag(leases, year.aar) : null
 
   return (
     <>
@@ -206,8 +214,8 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
 
       {year && <Redigering
         saet={year[mode]} loans={loans} persons={persons} property={property}
-        fordeling={resolveFordeling(settings, persons)}
-        setField={setField} setRente={setRente} setProrata={setProrata}
+        fordeling={resolveFordeling(settings, persons)} grundlag={grundlag}
+        setField={setField} setRente={setRente} setProrata={setProrata} setPeriode={setPeriode}
       />}
 
       {year && (
@@ -251,11 +259,12 @@ function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata
   )
 }
 
-function Redigering({ saet, loans, persons, property, fordeling, setField, setRente, setProrata }) {
+function Redigering({ saet, loans, persons, property, fordeling, grundlag, setField, setRente, setProrata, setPeriode }) {
   const resultat = resultatFoerRenter(saet)
   const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
   const mdr = antalMaaneder(saet)
   const pmdr = prorataMaaneder(saet)
+  const afvigelse = periodeAfvigelse(saet, grundlag)
 
   return (
     <>
@@ -275,6 +284,41 @@ function Redigering({ saet, loans, persons, property, fordeling, setField, setRe
           Til skat.dk (felt 748 / rubrik 207): <strong>{udlejningsdage360(saet)} dage</strong> — skemaet regner
           en kalendermåned som 30 dage og indkomståret som 360 dage.
         </p>
+
+        {/* Perioden er gemt ved oprettelsen; er lejekontrakten rettet siden, vises forskellen her. */}
+        {afvigelse && (
+          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--warn-bg, #fff8e6)' }}>
+            <p style={{ margin: 0 }}>
+              <span className="badge warn">Afviger fra lejekontrakten</span>
+            </p>
+            <table className="data" style={{ marginTop: 8 }}>
+              <thead>
+                <tr><th></th><th>Periode</th><th className="num">Kalenderdage</th><th className="num">Til skat.dk</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Gemt her</td>
+                  <td>{afvigelse.gemt.fra_dato || '—'} → {afvigelse.gemt.til_dato || '—'}</td>
+                  <td className="num">{afvigelse.gemt.dage}</td>
+                  <td className="num"><strong>{afvigelse.gemt.dage360}</strong></td>
+                </tr>
+                <tr>
+                  <td>Lejekontrakten</td>
+                  <td>{afvigelse.afledt.fra_dato} → {afvigelse.afledt.til_dato}</td>
+                  <td className="num">{afvigelse.afledt.dage}</td>
+                  <td className="num"><strong>{afvigelse.afledt.dage360}</strong></td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+              Perioden blev gemt da året blev oprettet — lejekontrakten kan være rettet siden.
+              Har du bevidst overstyret perioden, kan du lade den stå.
+            </p>
+            <button className="btn ghost" onClick={() => setPeriode(afvigelse.afledt.fra_dato, afvigelse.afledt.til_dato)}>
+              Brug lejekontraktens periode
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="card">
