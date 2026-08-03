@@ -278,7 +278,7 @@ test('forbedringer med beløb får egen sektion uden for udlejningsresultatet', 
 // ── Bilagsoversigten ──────────────────────────────────────────────────────────
 
 const bl = (id, aar, over = {}) => ({
-  id, aar, dato: `${aar}-03-17`, tekst: `bilag ${id}`, kategori: 'Vedligeholdelse',
+  id, aar, dato: `${aar}-03-17`, tekst: `bilag ${id}`, post_id: 'udgifter.vedligeholdelse',
   type: 'udgift', beloeb: 1000, mimetype: 'application/pdf', filsti: `${id}.pdf`, ...over,
 })
 
@@ -307,8 +307,38 @@ test('et år uden bilag giver en tom oversigt med en forklarende tekst — ikke 
 
 test('bilagsoversigtens kolonner er de samme på begge flader', () => {
   const o = kald({ bilag: [bl(1, 2025)] })
-  assert.deepEqual(o.opstilling.bilagsoversigt.kolonner.map(k => k.id), ['nummer', 'dato', 'tekst', 'kategori', 'beloeb'])
-  assert.deepEqual(Object.keys(o.opstilling.bilagsoversigt.raekker[0].celler), ['nummer', 'dato', 'tekst', 'kategori', 'beloeb'])
+  assert.deepEqual(o.opstilling.bilagsoversigt.kolonner.map(k => k.id), ['nummer', 'dato', 'tekst', 'post', 'beloeb'])
+  assert.deepEqual(Object.keys(o.opstilling.bilagsoversigt.raekker[0].celler), ['nummer', 'dato', 'tekst', 'post', 'beloeb'])
+})
+
+test('bilagsoversigten viser postens danske label — ikke postens id', () => {
+  const o = kald({
+    bilag: [
+      bl(1, 2025),
+      bl(2, 2025, { post_id: 'renteudgifter.renteudgifter' }),
+      bl(3, 2025, { post_id: 'indtaegter.leje', type: 'indtaegt' }),
+    ],
+  })
+  assert.deepEqual(o.opstilling.bilagsoversigt.raekker.map(r => r.celler.post),
+    ['Vedligeholdelse', 'Renteudgifter', 'Husleje'])
+})
+
+test('et bilag med en uoversættelig kategori vises markeret frem for at stå tomt', () => {
+  const o = kald({ bilag: [bl(1, 2025, { post_id: null, kategori: 'Ejerforening' })] })
+  assert.equal(o.opstilling.bilagsoversigt.raekker[0].celler.post, 'Ejerforening (ukendt post)')
+})
+
+test('et bilag på en ikke-summerbar post ændrer ikke udlejningsresultatet', () => {
+  const uden = kald()
+  const med = kald({
+    bilag: [
+      bl(1, 2025, { post_id: 'renteudgifter.renteudgifter', beloeb: 17849 }),
+      bl(2, 2025, { post_id: 'forbedringer.forbedringer', beloeb: 40000 }),
+    ],
+  })
+  assert.equal(med.sum.udlejningsresultat, uden.sum.udlejningsresultat)
+  assert.equal(med.sum.udgifter, uden.sum.udgifter)
+  assert.equal(med.sum.forbedringer, uden.sum.forbedringer, 'bilaget er dokumentation, ikke en indtastning')
 })
 
 // ── Noten ─────────────────────────────────────────────────────────────────────

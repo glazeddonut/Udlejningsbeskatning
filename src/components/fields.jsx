@@ -42,14 +42,19 @@ export function NumberField({ label, hint, value, onChange, suffix = 'kr.' }) {
   )
 }
 
+// En valgmulighed er enten { value, label } eller en gruppe { label, options: [...] },
+// som bliver til en <optgroup>. Grupperne bruges af bilagenes postvælger, hvor
+// indtægter, fradragsberettigede udgifter og posterne uden for udlejningsresultatet
+// ikke må kunne forveksles.
 export function SelectField({ label, hint, value, onChange, options }) {
+  const valg = (o) => <option key={o.value} value={o.value}>{o.label}</option>
   return (
     <div className="field">
       {label && <label>{label} {hint && <span className="hint">· {hint}</span>}</label>}
       <select value={value ?? ''} onChange={e => onChange(e.target.value)}>
-        {options.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
+        {options.map(o => (o.options
+          ? <optgroup key={o.label} label={o.label}>{o.options.map(valg)}</optgroup>
+          : valg(o)))}
       </select>
     </div>
   )

@@ -2,7 +2,7 @@ import express from 'express'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join, extname } from 'path'
-import { bilagForAar, medBilagsnumre } from './src/lib/bilag.js'
+import { bilagForAar, medBilagsnumre, migrerBilag } from './src/lib/bilag.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // DB-sti kan overrides med env var (peg på en persistent volume i container)
@@ -28,8 +28,9 @@ const emptyDb = () => ({
   loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse{} }
   leases: [],           // lejekontrakter til datteren (én aktiv pr. år) { id, startdato, slutdato, maanedlig_leje, ... }
   years: [],            // { id, aar, budget:{...}, faktisk:{...} }
-  bilag: [],            // { id, aar, dato, tekst, beloeb, kategori, type, filnavn, mimetype, filsti }
-                        // (nummeret gemmes ikke — det udledes af årets liste, se src/lib/bilag.js)
+  bilag: [],            // { id, aar, dato, tekst, beloeb, post_id, type, filnavn, mimetype, filsti }
+                        // (post_id = id på en post i kontoplanen; nummeret gemmes ikke —
+                        //  det udledes af årets liste, se src/lib/bilag.js)
   settings: { ...DEFAULT_SETTINGS },
   field_mappings: {},   // overrides: { "2026-forskud": [ {felt_nr,label,kilde} ] }; tom = brug defaults i frontend
   nextPersonId: 1,
@@ -55,6 +56,11 @@ function loadDb() {
     // derfor allerede forkerte på disken; nummeret udledes nu ét sted (src/lib/bilag.js).
     // Ikke en migrering der skal til for at serveres korrekt — den fjerner den anden sandhed.
     for (const b of db.bilag) delete b.nummer
+    // Migrér bilagets frie kategoritekst til en post i kontoplanen (ADR-0005).
+    // Oversættelsen selv ligger i src/lib/bilag.js, hvor den kan testes rent; her
+    // udføres den, så den skrives med på disken ved næste gemning — som lease→leases.
+    // Kan en kategori ikke oversættes, bevares den og markeres frem for at gå tabt.
+    db.bilag = migrerBilag(db.bilag)
     if (!db.nextPersonId) db.nextPersonId = 1
     if (!db.nextLoanId) db.nextLoanId = 1
     if (!db.nextYearId) db.nextYearId = 1
@@ -265,7 +271,7 @@ app.get('/api/bilag', (req, res) => {
 // Upload: fil sendes som base64 (data-URL eller ren base64) i JSON-body.
 app.post('/api/bilag', (req, res) => {
   const db = loadDb()
-  const { aar, dato, tekst, beloeb, kategori, type, filnavn, mimetype, data } = req.body
+  const { aar, dato, tekst, beloeb, post_id, type, filnavn, mimetype, data } = req.body
   const id = db.nextBilagId++
   let filsti = null
   if (data) {
@@ -278,7 +284,7 @@ app.post('/api/bilag', (req, res) => {
   const bilag = {
     id, aar: Number(aar),
     dato: dato ?? '', tekst: tekst ?? '', beloeb: beloeb ?? 0,
-    kategori: kategori ?? '', type: type ?? 'udgift',
+    post_id: post_id ?? null, type: type ?? 'udgift',
     filnavn: filnavn ?? '', mimetype: mimetype ?? '', filsti,
   }
   db.bilag.push(bilag)
@@ -301,11 +307,13 @@ app.put('/api/bilag/:id', (req, res) => {
   const db = loadDb()
   const b = db.bilag.find(x => x.id === Number(req.params.id))
   if (b) {
-    const { dato, tekst, beloeb, kategori, type } = req.body
+    const { dato, tekst, beloeb, post_id, type } = req.body
     if (dato !== undefined) b.dato = dato
     if (tekst !== undefined) b.tekst = tekst
     if (beloeb !== undefined) b.beloeb = beloeb
-    if (kategori !== undefined) b.kategori = kategori
+    // Vælges en post, ryger den bevarede (uoversættelige) kategori — ellers ville
+    // bilaget bære to sandheder om hvad det dokumenterer.
+    if (post_id !== undefined) { b.post_id = post_id; delete b.kategori }
     if (type !== undefined) b.type = type
   }
   saveDb(db)

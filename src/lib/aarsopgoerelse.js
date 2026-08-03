@@ -24,12 +24,13 @@
 // ikke kan formatere det samme tal forskelligt.
 //
 // Bemærk at opstillingen endnu ikke rummer AFSTEMNINGEN — bilagssummen pr. post
-// holdt op mod det indtastede årsbeløb (CONTEXT.md, ADR-0005). Den forudsætter, at
-// bilaget peger på en post i kontoplanen i stedet for at bære en fri kategoritekst,
-// og bygges derfor sammen med den ændring. Her leveres bilagsOVERSIGTEN.
+// holdt op mod det indtastede årsbeløb (CONTEXT.md, ADR-0005). Forudsætningen er nu
+// på plads: bilaget peger på en post i kontoplanen (`post_id`) i stedet for at bære
+// en fri kategoritekst, og bilagsoversigten viser postens danske label. Selve
+// sammenligningen bygges for sig. Her leveres bilagsOVERSIGTEN.
 
 import { normaliserSaet } from './saet.js'
-import { bilagForAar } from './bilag.js'
+import { bilagForAar, bilagPost } from './bilag.js'
 import { kr, kr2 } from './format.js'
 import {
   gruppeOpgoerelse, resultatFoerRenter, sumRenter,
@@ -51,7 +52,7 @@ const BILAGSKOLONNER = Object.freeze([
   Object.freeze({ id: 'nummer', label: 'Nr.' }),
   Object.freeze({ id: 'dato', label: 'Dato' }),
   Object.freeze({ id: 'tekst', label: 'Tekst' }),
-  Object.freeze({ id: 'kategori', label: 'Kategori' }),
+  Object.freeze({ id: 'post', label: 'Post' }),
   Object.freeze({ id: 'beloeb', label: 'Beløb', num: true }),
 ])
 
@@ -139,7 +140,7 @@ function byggOpstilling({ aar, grundlag, saet, dagstal, sum, personer, aaretsBil
           nummer: String(b.nummer),
           dato: b.dato || '',
           tekst: b.tekst || '',
-          kategori: b.kategori || '',
+          post: bilagPost(b).label,
           beloeb: (b.type === 'indtaegt' ? '' : '-') + kr2(b.beloeb),
         },
       })),

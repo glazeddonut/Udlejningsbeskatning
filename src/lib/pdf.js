@@ -19,12 +19,14 @@ const LINE = rgb(0.8, 0.83, 0.88)
 
 // Bilagsoversigtens kolonner er ren sidelayout: hvor langt inde kolonnen starter,
 // og hvor mange tegn der er plads til. Kolonnerne selv (og deres overskrifter)
-// kommer fra opstillingen.
+// kommer fra opstillingen. Post-kolonnen bærer kontoplanens danske labels, og de er
+// længere end de gamle kategoriord — derfor starter den længere til venstre og har
+// plads til hele "Grundskyld (ejendomsskat)".
 const BILAG_LAYOUT = {
   nummer: { x: 0 },
   dato: { x: 34 },
-  tekst: { x: 110, maks: 34 },
-  kategori: { x: 300, maks: 20 },
+  tekst: { x: 110, maks: 30 },
+  post: { x: 280, maks: 26 },
   beloeb: { hoejre: true },
 }
 

@@ -76,14 +76,20 @@ månedsbeløb op til årsbeløb — aldrig i 30/360.
 ### Regnskabet
 
 **Kontoplan**:
-Den samlede liste over hvilke indtægts- og udgiftsposter der findes, hvad de hedder,
-hvilken gruppe de hører til, og om de vedrører hele ejendommen eller kun det udlejede.
-Én kilde til sandhed for indtastning, regnskab, PDF og bilag.
+Den samlede liste over hvilke poster der findes, hvad de hedder, hvilken gruppe de
+hører til, om de vedrører hele ejendommen eller kun det udlejede, og om de summer
+med i udlejningsresultatet. Én kilde til sandhed for indtastning, regnskab, PDF og bilag.
 _Undgå_: kategorier, felter, rækker
 
 **Post**:
 En enkelt linje i kontoplanen — fx grundskyld eller husleje.
 _Undgå_: konto, kategori, række
+
+**Summerbar post**:
+En post der er en linje i udlejningsresultatet. De ikke-summerbare poster —
+renteudgifter og forbedringer — findes, fordi et bilag skal kunne dokumentere alt
+hvad der er betalt, også det der står uden for resultatet. De ligger derfor uden for
+indtægts- og udgiftsgrupperne og kan ikke ses af nogen summering.
 
 **Hjemløs post**:
 En værdi gemt i et talsæt under en nøgle der ikke findes i kontoplanen. Tælles altid
@@ -106,7 +112,13 @@ _Undgå_: rapport, view
 
 **Bilag**:
 Et dokumenteret indtægts- eller udgiftsakt: dato, beløb, post, og en fil på disk.
-Nummereres fortløbende og gapfrit inden for året.
+Posten er en reference til kontoplanen, ikke en fri tekst. Nummereres fortløbende og
+gapfrit inden for året.
+
+**Ukendt post**:
+Et bilag hvis gemte post ikke findes i kontoplanen — typisk en gammel kategoritekst
+der ikke kunne oversættes. Teksten bevares og vises markeret, aldrig tavst tabt.
+Modstykket på talsættets side hedder en hjemløs post.
 
 **Afstemning**:
 Sammenligning af bilagssummen pr. post med det indtastede årsbeløb for samme post.

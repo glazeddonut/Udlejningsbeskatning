@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bilagForAar, medBilagsnumre } from './bilag.js'
+import { bilagForAar, medBilagsnumre, migrerBilag, postIdForKategori, bilagPost } from './bilag.js'
 
 // Bilagsnummeret er ikke stamdata — det er en egenskab ved årets samlede bilagsliste,
 // og det udledes derfor ved hvert opslag. Testene her fastholder de tre ting der
@@ -74,6 +74,92 @@ test('uden år nummereres alle bilag, hvert år for sig, sorteret efter id', () 
   assert.deepEqual(medBilagsnumre(alle).map(x => [x.id, x.aar, x.nummer]), [
     [1, 2025, 1], [2, 2025, 2], [3, 2026, 1], [4, 2026, 2],
   ])
+})
+
+// ── Bilaget peger på en post i kontoplanen (ADR-0005) ─────────────────────────
+//
+// Kategorien var en fri tekst valgt fra en liste i Bilag-fanen, uden nogen kobling til
+// kontoplanen: et bilag på "Vedligeholdelse" og udgiftsposten `vedligeholdelse` var to
+// ubeslægtede ting. Bilaget bærer nu postens id, og de gamle kategorier oversættes.
+
+test('en entydig kategori oversættes til postens id, og den frie tekst ryddes', () => {
+  const [ud] = migrerBilag([b(1, 2025, { kategori: 'Vedligeholdelse', type: 'udgift' })])
+  assert.equal(ud.post_id, 'udgifter.vedligeholdelse')
+  assert.equal('kategori' in ud, false, 'den frie tekst må ikke blive stående som anden sandhed')
+})
+
+test('kategorier der findes i begge grupper afgøres af bilagets type', () => {
+  assert.equal(postIdForKategori('Vand', 'udgift'), 'udgifter.vand')
+  assert.equal(postIdForKategori('Vand', 'indtaegt'), 'indtaegter.vand')
+  assert.equal(postIdForKategori('Varme', 'udgift'), 'udgifter.varme')
+  assert.equal(postIdForKategori('Varme', 'indtaegt'), 'indtaegter.varme')
+  assert.equal(postIdForKategori('Andet', 'udgift'), 'udgifter.andet')
+  assert.equal(postIdForKategori('Andet', 'indtaegt'), 'indtaegter.andet')
+})
+
+test('alle vælgerens gamle kategorier oversættes — ingen af dem bliver hjemløse', () => {
+  const gamle = [
+    ['Husleje', 'indtaegt', 'indtaegter.leje'],
+    ['Anden indtægt', 'indtaegt', 'indtaegter.andet'],
+    ['Grundskyld', 'udgift', 'udgifter.grundskyld'],
+    ['Fællesudgifter', 'udgift', 'udgifter.faellesudgifter'],
+    ['Forsikring', 'udgift', 'udgifter.forsikring'],
+    ['Vedligeholdelse', 'udgift', 'udgifter.vedligeholdelse'],
+    ['Administration', 'udgift', 'udgifter.administration'],
+    ['Renovation', 'udgift', 'udgifter.renovation'],
+    ['Renteudgifter', 'udgift', 'renteudgifter.renteudgifter'],
+  ]
+  for (const [kategori, type, forventet] of gamle) {
+    assert.equal(postIdForKategori(kategori, type), forventet, kategori)
+  }
+})
+
+test('en kategori kontoplanen ikke kender bevares og markeres — den går ikke tabt', () => {
+  const [ud] = migrerBilag([b(1, 2025, { kategori: 'Ejerforening', type: 'udgift' })])
+  assert.equal(ud.post_id, null)
+  assert.equal(ud.kategori, 'Ejerforening', 'den oprindelige kategori skal bevares')
+  assert.deepEqual(bilagPost(ud), { label: 'Ejerforening (ukendt post)', kendt: false })
+})
+
+test('migreringen er idempotent og lader et bilag der allerede peger på en post ligge', () => {
+  const engang = migrerBilag([
+    b(1, 2025, { kategori: 'Vedligeholdelse', type: 'udgift' }),
+    b(2, 2025, { kategori: 'Ejerforening', type: 'udgift' }),
+  ])
+  assert.deepEqual(migrerBilag(engang), engang)
+  assert.deepEqual(migrerBilag([b(3, 2025, { post_id: 'udgifter.andet' })]), [b(3, 2025, { post_id: 'udgifter.andet' })])
+})
+
+test('migreringen muterer ikke inddata og rører ikke bilagsnumrene', () => {
+  const original = { id: 5, aar: 2026, tekst: 'Vindue', beloeb: 21608.75, kategori: 'Vedligeholdelse', type: 'udgift' }
+  const alle = [original, { id: 6, aar: 2026, kategori: 'Andet', type: 'udgift' }]
+  const migreret = migrerBilag(alle)
+  assert.equal(original.kategori, 'Vedligeholdelse', 'inddata må ikke ændres')
+  assert.equal(original.post_id, undefined)
+  assert.equal(migreret[0].beloeb, 21608.75, 'øvrige felter bæres uændret med')
+  assert.deepEqual(bilagForAar(migreret, 2026).map(x => [x.id, x.nummer]), bilagForAar(alle, 2026).map(x => [x.id, x.nummer]))
+})
+
+test('bilagPost viser postens danske label — også for de ikke-summerbare poster', () => {
+  const label = (post_id) => bilagPost({ post_id }).label
+  assert.equal(label('udgifter.vedligeholdelse'), 'Vedligeholdelse')
+  assert.equal(label('indtaegter.leje'), 'Husleje')
+  assert.equal(label('indtaegter.vand'), 'Vand (opkrævet)')
+  assert.equal(label('udgifter.vand'), 'Vand (afholdt)')
+  assert.equal(label('renteudgifter.renteudgifter'), 'Renteudgifter')
+  assert.equal(label('forbedringer.forbedringer'), 'Forbedring')
+  assert.equal(bilagPost({ post_id: 'udgifter.vedligeholdelse' }).kendt, true)
+})
+
+test('et bilag helt uden post og uden kategori viser ingenting frem for en falsk markering', () => {
+  assert.deepEqual(bilagPost({ post_id: null, kategori: '' }), { label: '', kendt: false })
+  assert.deepEqual(bilagPost({}), { label: '', kendt: false })
+  assert.deepEqual(bilagPost(null), { label: '', kendt: false })
+})
+
+test('et post_id kontoplanen ikke kender markeres som ukendt frem for at blive vist råt', () => {
+  assert.deepEqual(bilagPost({ post_id: 'udgifter.ejerforening' }),
+    { label: 'udgifter.ejerforening (ukendt post)', kendt: false })
 })
 
 test('bilagets øvrige felter bæres uændret med, og inddata muteres ikke', () => {

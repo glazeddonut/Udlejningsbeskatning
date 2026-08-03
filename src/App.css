@@ -236,6 +236,11 @@ table.data tr.total td { font-weight: 700; border-top: 2px solid var(--border); 
 /* Hjemløs post: en værdi under en nøgle kontoplanen ikke kender. Den tælles med i
    totalen, så den skal være synlig — ikke skjult og ikke en fejl (ADR-0001). */
 .regnskab table.rg tr.hjemloes td { font-style: italic; color: var(--text-muted); }
+/* Ukendt post: et bilag hvis gemte post ikke findes i kontoplanen. Teksten er
+   bevaret, men peger ikke på noget — den skal være synlig, ikke skjult (ADR-0005).
+   Beslægtet med den hjemløse post ovenfor, men ikke det samme begreb: den ene
+   handler om et bilag, den anden om en værdi i et talsæt. */
+table.data td.ukendt-post { font-style: italic; color: var(--text-muted); }
 .regnskab .rg-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
 
 @media print {
