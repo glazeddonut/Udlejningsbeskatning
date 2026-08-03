@@ -49,6 +49,24 @@ export const REGNSKABSNOTE =
   'udlejningsresultatet. Forbedringsudgifter er ikke fradragsberettigede. ' +
   'Beløb er baseret på de indtastede tal og skal verificeres mod bilag og skat.dk.'
 
+// En KVITTERET periodeafvigelse hører hjemme i noten. Regnskabet indberetter et dagstal
+// (felt 748 / rubrik 207) der ikke stemmer med lejekontrakten, og forklaringen på det
+// skal stå samme sted som tallet — over for SKAT er en uforklaret forskel netop det der
+// giver spørgsmål. En UKVITTERET afvigelse står derimod ikke her: den er stadig en
+// advarsel i Årets tal, ikke en forklaring regnskabet kan stå inde for.
+//
+// Noten er én streng, så skærmen og PDF'en skriver den ordret ens. Datoerne skrives som
+// ISO ligesom i Årets tal, og dagstallene med, fordi det er dem der indberettes.
+const visDato = (d) => d || '—'
+function periodenote(afvigelse) {
+  if (!afvigelse?.kvitteret) return ''
+  const { gemt, afledt, begrundelse } = afvigelse
+  return ' Udlejningsperioden afviger bevidst fra lejekontrakten: '
+    + `${visDato(gemt.fra_dato)} – ${visDato(gemt.til_dato)} mod lejekontraktens `
+    + `${visDato(afledt.fra_dato)} – ${visDato(afledt.til_dato)} `
+    + `(${gemt.dage360} mod ${afledt.dage360} dage til skat.dk). Begrundelse: ${begrundelse}`
+}
+
 const BILAGSKOLONNER = Object.freeze([
   Object.freeze({ id: 'nummer', label: 'Nr.' }),
   Object.freeze({ id: 'dato', label: 'Dato' }),
@@ -180,7 +198,7 @@ function byggAfstemning({ sum, aaretsBilag, indt, udg }) {
   return { titel, forklaring: AFSTEMNINGSFORKLARING, kolonner: AFSTEMNINGSKOLONNER, raekker, tom_tekst: '' }
 }
 
-function byggOpstilling({ aar, grundlag, saet, dagstal, periode, sum, personer, aaretsBilag, property, persons, indt, udg }) {
+function byggOpstilling({ aar, grundlag, saet, dagstal, periode, afvigelse, sum, personer, aaretsBilag, property, persons, indt, udg }) {
   const ejendom = `${property?.navn || 'Ejendom'}${property?.adresse ? ', ' + property.adresse : ''}`
   const ejere = 'Ejere: ' + (persons || []).map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' · ')
   // Uden udlejningsperiode skriver hovedet flaget frem for et tal (ADR-0002). "0
@@ -258,7 +276,7 @@ function byggOpstilling({ aar, grundlag, saet, dagstal, periode, sum, personer, 
         },
       })),
     },
-    note: REGNSKABSNOTE,
+    note: REGNSKABSNOTE + periodenote(afvigelse),
   }
 }
 
@@ -286,6 +304,7 @@ export function aarsopgoerelse({ aar, grundlag = 'faktisk', years, leases, perso
   }
 
   const grundlagFraKontrakt = aarsgrundlag(leases, year.aar)
+  const afvigelse = periodeAfvigelse(saet, grundlagFraKontrakt)
   const fordeling = resolveFordeling(settings, persons)
   const personer = personOpgoerelse(saet, { persons, property, loans, fordeling })
   // Bilagene migreres her, ikke kun i serverens loadDb. Indgangen lover db-formede
@@ -314,11 +333,11 @@ export function aarsopgoerelse({ aar, grundlag = 'faktisk', years, leases, perso
     dagstal,
     periode,
     aarsgrundlag: grundlagFraKontrakt,
-    periodeafvigelse: periodeAfvigelse(saet, grundlagFraKontrakt),
+    periodeafvigelse: afvigelse,
     fordeling,
     personer,
     sum,
     bilag: aaretsBilag,
-    opstilling: byggOpstilling({ aar: year.aar, grundlag, saet, dagstal, periode, sum, personer, aaretsBilag, property, persons, indt, udg }),
+    opstilling: byggOpstilling({ aar: year.aar, grundlag, saet, dagstal, periode, afvigelse, sum, personer, aaretsBilag, property, persons, indt, udg }),
   }
 }

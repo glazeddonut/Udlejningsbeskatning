@@ -570,3 +570,80 @@ test('noteteksten findes ét sted og er den samme i opstillingen', () => {
   assert.match(REGNSKABSNOTE, /nærtstående/)
   assert.match(REGNSKABSNOTE, /Renteudgifter er personlige/)
 })
+
+// ── Kvittering på en periodeafvigelse ─────────────────────────────────────────
+//
+// Fixturens 2025 har gemt 6. august mod lejekontraktens 5. — den faktiske indflytning
+// skete dagen efter, så afvigelsen er rigtig. Kvitteringen gør advarslen til en neutral
+// note, og begrundelsen følger med i regnskabets note, hvor den hører hjemme over for
+// SKAT. Noten er ÉN streng, så skærmen og PDF'en skriver ordret det samme.
+
+const BEGRUNDELSE = 'Faktisk indflytning skete 6. august, dagen efter kontraktens start.'
+// Kvitteringen som den ligger på disken: begrundelsen plus de to perioder den blev
+// givet for. En ren boolean ville kunne dække over en periode der er ændret siden.
+const KVITTERING = {
+  begrundelse: BEGRUNDELSE,
+  gemt: { fra_dato: '2025-08-06', til_dato: '2025-12-31' },
+  afledt: { fra_dato: '2025-08-05', til_dato: '2025-12-31' },
+}
+const medKvittering = (over = {}) => {
+  const s = raatSaet({ periode_kvittering: KVITTERING, ...over })
+  return { years: [{ id: 8, aar: 2025, budget: s, faktisk: s }] }
+}
+
+test('en afvigelse uden begrundelse er ukvitteret og står ikke i noten', () => {
+  const o = kald()
+  assert.equal(o.periodeafvigelse.kvitteret, false)
+  assert.equal(o.opstilling.note, REGNSKABSNOTE)
+})
+
+test('en kvitteret afvigelse bliver til en neutral note med begrundelsen', () => {
+  const o = kald(medKvittering())
+  assert.equal(o.periodeafvigelse.kvitteret, true)
+  assert.equal(o.periodeafvigelse.begrundelse, BEGRUNDELSE)
+  // Perioden er uændret — en kvittering forklarer, den retter ikke (ADR-0002).
+  assert.equal(o.periode.fra_dato, '2025-08-06')
+  assert.equal(o.dagstal.indberetningsdage, 145)
+})
+
+test('begrundelsen når frem til opstillingens note — den ene tekst begge flader skriver', () => {
+  const note = kald(medKvittering()).opstilling.note
+  assert.match(note, /Faktisk indflytning skete 6\. august/)
+  assert.match(note, /2025-08-06/)                       // talsættets egen periode
+  assert.match(note, /2025-08-05/)                       // lejekontraktens
+  assert.match(note, /145/)                              // det dagstal der indberettes
+  assert.ok(note.startsWith(REGNSKABSNOTE), 'den faste note står stadig først')
+})
+
+test('kvitteringen dækker ikke en periode der er ændret siden — advarslen vender tilbage', () => {
+  // Talsættets periode flyttes efter kvitteringen.
+  const flyttet = kald(medKvittering({ fra_dato: '2025-09-01' }))
+  assert.equal(flyttet.periodeafvigelse.kvitteret, false)
+  assert.equal(flyttet.periodeafvigelse.foraeldet, true)
+  assert.equal(flyttet.opstilling.note, REGNSKABSNOTE)
+
+  // Eller lejekontrakten rettes efter kvitteringen.
+  const rettetLease = kald({
+    ...medKvittering(),
+    leases: [{ id: 1, startdato: '2025-07-01', slutdato: '2025-12-31', maanedlig_leje: 4500 }],
+  })
+  assert.equal(rettetLease.periodeafvigelse.kvitteret, false)
+  assert.equal(rettetLease.periodeafvigelse.foraeldet, true)
+  assert.equal(rettetLease.opstilling.note, REGNSKABSNOTE)
+})
+
+test('en manglende periode kan ikke kvitteres væk — noten påstår ikke en bevidst afvigelse', () => {
+  const o = kald(medKvittering({
+    fra_dato: '', til_dato: '',
+    periode_kvittering: { ...KVITTERING, gemt: { fra_dato: '', til_dato: '' } },
+  }))
+  assert.equal(o.periode.mangler, true)
+  assert.equal(o.periodeafvigelse.kvitteret, false)
+  assert.equal(o.opstilling.note, REGNSKABSNOTE)
+})
+
+test('uden afvigelse er der intet at kvittere — heller ikke med en gammel kvittering liggende', () => {
+  const o = kald(medKvittering({ fra_dato: '2025-08-05' }))   // enig med lejekontrakten
+  assert.equal(o.periodeafvigelse, null)
+  assert.equal(o.opstilling.note, REGNSKABSNOTE)
+})

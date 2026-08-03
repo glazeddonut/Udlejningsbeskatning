@@ -6,7 +6,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling, gruppeOpgoerelse,
   udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
-  prorataMaaneder, aarsgrundlag, periodeAfvigelse, manglerPeriode,
+  prorataMaaneder, aarsgrundlag, periodeAfvigelse, periodeKvittering, manglerPeriode,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
@@ -106,6 +106,12 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     setYear(prev => ({ ...prev, [mode]: { ...prev[mode], fra_dato: fra, til_dato: til } }))
     setDirty(true)
   }
+  // Kvitteringen på en periodeafvigelse gemmes på årets talsæt som alt andet — den
+  // følger grundlaget (budget/faktisk), fordi de to kan have hver sin periode.
+  const setKvittering = (k) => {
+    setYear(prev => ({ ...prev, [mode]: { ...prev[mode], periode_kvittering: k } }))
+    setDirty(true)
+  }
   const setRente = (loanId, v) => {
     setYear(prev => ({
       ...prev,
@@ -198,6 +204,7 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
         saet={year[mode]} loans={loans} persons={persons} property={property}
         fordeling={resolveFordeling(settings, persons)} grundlag={grundlag}
         setField={setField} setRente={setRente} setProrata={setProrata} setPeriode={setPeriode}
+        setKvittering={setKvittering}
       />}
 
       {year && (
@@ -292,7 +299,40 @@ function GruppeKort({ titel, gruppe, saet, setField, setProrata }) {
   )
 }
 
-function Redigering({ saet, loans, persons, property, fordeling, grundlag, setField, setRente, setProrata, setPeriode }) {
+// Kvitteringsformularen: fritekst-begrundelsen for en afvigelse der ikke er kvitteret
+// (eller hvis kvittering ikke længere dækker). Er der kvitteret før for andre datoer,
+// prefilles teksten — den skal kunne genbruges, men ikke gælde af sig selv.
+// Kalderen giver komponenten en `key` bundet til perioderne, så feltet nulstilles når
+// afvigelsen bliver en anden.
+function KvitterAfvigelse({ afvigelse, onKvitter }) {
+  const [tekst, setTekst] = useState(afvigelse.foraeldet_begrundelse || '')
+  return (
+    <>
+      {afvigelse.foraeldet && (
+        <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+          Der er tidligere kvitteret med “{afvigelse.foraeldet_begrundelse}”, men perioden er
+          ændret siden — begrundelsen dækker ikke den afvigelse der står nu.
+        </p>
+      )}
+      <div className="field" style={{ marginTop: 10 }}>
+        <label>Begrundelse for afvigelsen</label>
+        <textarea
+          rows={2}
+          value={tekst}
+          onChange={e => setTekst(e.target.value)}
+          placeholder="fx: Faktisk indflytning skete 6. august, dagen efter kontraktens start."
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button className="btn ghost" disabled={!tekst.trim()} onClick={() => onKvitter(periodeKvittering(afvigelse, tekst))}>
+          Kvittér med begrundelse
+        </button>
+      </div>
+    </>
+  )
+}
+
+function Redigering({ saet, loans, persons, property, fordeling, grundlag, setField, setRente, setProrata, setPeriode, setKvittering }) {
   const resultat = resultatFoerRenter(saet)
   const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
   const pmdr = prorataMaaneder(saet)
@@ -333,11 +373,15 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
           </>
         )}
 
-        {/* Perioden er gemt ved oprettelsen; er lejekontrakten rettet siden, vises forskellen her. */}
+        {/* Perioden er gemt ved oprettelsen; er lejekontrakten rettet siden, vises forskellen her.
+            Er afvigelsen kvitteret med en begrundelse, vises den neutralt: en advarsel der
+            aldrig kan gå væk på et korrekt år, lærer brugeren at ignorere advarsler. */}
         {afvigelse && (
           <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
             <p style={{ margin: 0 }}>
-              <span className="badge warn">Afviger fra lejekontrakten</span>
+              {afvigelse.kvitteret
+                ? <span className="badge neutral">Bevidst afvigelse fra lejekontrakten</span>
+                : <span className="badge warn">Afviger fra lejekontrakten</span>}
             </p>
             <table className="data" style={{ marginTop: 8 }}>
               <thead>
@@ -359,13 +403,50 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
                 </tr>
               </tbody>
             </table>
-            <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
-              Perioden blev gemt da året blev oprettet — lejekontrakten kan være rettet siden.
-              Har du bevidst overstyret perioden, kan du lade den stå.
-            </p>
-            <button className="btn ghost" onClick={() => setPeriode(afvigelse.afledt.fra_dato, afvigelse.afledt.til_dato)}>
-              Brug lejekontraktens periode
-            </button>
+            {afvigelse.kvitteret ? (
+              <>
+                <p style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+                  <span className="muted">Begrundelse: </span>{afvigelse.begrundelse}
+                </p>
+                <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+                  Begrundelsen står i årsregnskabets note. Perioden er uændret — kvitteringen
+                  forklarer afvigelsen, den retter den ikke. Ændrer du perioden eller
+                  lejekontrakten, dækker begrundelsen ikke længere, og advarslen vender tilbage.
+                </p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn ghost" onClick={() => setKvittering(null)}>Fjern begrundelsen</button>
+                  <button className="btn ghost" onClick={() => setPeriode(afvigelse.afledt.fra_dato, afvigelse.afledt.til_dato)}>
+                    Brug lejekontraktens periode
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+                  Perioden blev gemt da året blev oprettet — lejekontrakten kan være rettet siden.
+                  Har du bevidst overstyret perioden, kan du kvittere med en begrundelse: så vises
+                  afvigelsen neutralt, og begrundelsen følger med i årsregnskabets note.
+                </p>
+                {/* Mangler den gemte periode, er der intet at kvittere for: et fravær
+                    forklares ikke, det udfyldes (ADR-0002). Boksen "Periode mangler"
+                    ovenfor siger allerede hvad der skal gøres. */}
+                {manglerPeriode(saet) ? (
+                  <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+                    Udfyld først udlejningsperioden — en manglende periode kan ikke kvitteres,
+                    kun rettes.
+                  </p>
+                ) : (
+                  <KvitterAfvigelse
+                    key={[afvigelse.gemt.fra_dato, afvigelse.gemt.til_dato, afvigelse.afledt.fra_dato, afvigelse.afledt.til_dato, afvigelse.foraeldet_begrundelse].join('|')}
+                    afvigelse={afvigelse}
+                    onKvitter={setKvittering}
+                  />
+                )}
+                <button className="btn ghost" style={{ marginTop: 8 }} onClick={() => setPeriode(afvigelse.afledt.fra_dato, afvigelse.afledt.til_dato)}>
+                  Brug lejekontraktens periode
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

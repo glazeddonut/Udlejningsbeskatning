@@ -52,6 +52,18 @@ hvert opslag. Modstykket til talsættet, som er et gemt øjebliksbillede.
 Forskellen mellem talsættets gemte udlejningsperiode og årsgrundlagets. Rapporteres,
 rettes aldrig automatisk, og kan kvitteres med en begrundelse.
 
+**Kvittering**:
+Brugerens fritekst-begrundelse for en periodeafvigelse, gemt på årets talsæt sammen med
+netop de to perioder den blev givet for. Er den givet, vises afvigelsen neutralt og
+begrundelsen står i årsregnskabets note. Den forklarer afvigelsen, den retter den ikke.
+En manglende udlejningsperiode kan ikke kvitteres — kun udfyldes.
+_Undgå_: accept, kvittering af bilag (et bilag kvitteres ikke, det bogføres)
+
+**Forældet kvittering**:
+En kvittering hvis to perioder ikke længere er dem der står nu — lejekontrakten eller
+talsættet er rettet siden. Den dækker ikke, så advarslen vender tilbage; teksten bevares
+og vises som tidligere begrundelse, aldrig som gældende.
+
 **Hul-år**:
 Et kalenderår som ingen lejekontrakt dækker. Ikke det samme som et delår.
 

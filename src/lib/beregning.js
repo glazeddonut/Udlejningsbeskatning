@@ -28,6 +28,7 @@ export function tomtSaet() {
     renteudgifter: {},        // { loanId: beløb } (aldrig pro rata — faktiske renter)
     udlejet_andel_pct: 100,
     naertstaaende: true,
+    periode_kvittering: null, // kvittering på en periodeafvigelse (se periodeKvittering)
   }
 }
 
@@ -90,19 +91,69 @@ export function aarsgrundlag(leases, aar) {
   }
 }
 
+const sammePeriode = (a, b) =>
+  (a?.fra_dato || '') === (b?.fra_dato || '') && (a?.til_dato || '') === (b?.til_dato || '')
+
+// En kvittering på en periodeafvigelse: brugerens begrundelse, bundet til præcis de to
+// perioder den blev givet for. Gemmes på årets talsæt som `periode_kvittering`.
+//
+// Bindingen er hele pointen. En ren boolean ("afvigelsen er accepteret") ville blive
+// stående når lejekontrakten eller talsættet blev rettet bagefter, og dermed dække over
+// en helt ny afvigelse med en gammel forklaring — netop det en kvittering ikke må kunne.
+// Derfor gemmes begge perioder med, og kvitteringen gælder kun så længe de holder.
+//
+// Returnerer null når der intet er at kvittere for, når begrundelsen er tom — en
+// kvittering uden ord forklarer ingenting og ville kun slukke advarslen — og når den
+// gemte periode MANGLER: et fravær forklares ikke, det udfyldes (ADR-0002). Noten ville
+// ellers skrive "— – — (0 dage til skat.dk)" som en bevidst afvigelse, altså præcis den
+// slags svar der ser legitimt ud, netop når oplysningen mangler.
+export function periodeKvittering(afvigelse, begrundelse) {
+  const tekst = String(begrundelse ?? '').trim()
+  if (!afvigelse || !tekst || manglerPeriode(afvigelse.gemt)) return null
+  return {
+    begrundelse: tekst,
+    gemt: { fra_dato: afvigelse.gemt.fra_dato, til_dato: afvigelse.gemt.til_dato },
+    afledt: { fra_dato: afvigelse.afledt.fra_dato, til_dato: afvigelse.afledt.til_dato },
+  }
+}
+
 // Afviger det gemte talsæts periode fra lejekontrakten? Returnerer null når de er
 // enige (eller der ingen kontrakt er at afstemme mod), ellers begge sæt tal.
 // En afvigelse er IKKE nødvendigvis en fejl — brugeren kan have overstyret bevidst
 // (fx faktisk indflytning en dag efter kontraktens start). Derfor rapporteres den,
 // den rettes ikke automatisk.
+//
+// Er afvigelsen kvitteret, rapporteres den stadig — men som en neutral note med
+// begrundelsen frem for som en advarsel. En advarsel der aldrig kan gå væk på et
+// korrekt år, lærer brugeren at ignorere advarsler, og appens øvrige advarsler handler
+// om markedsleje og gaveelement.
+//
+// `begrundelse` er tom med mindre kvitteringen faktisk dækker DENNE afvigelse. Den
+// gamle tekst går ikke tabt — den står i `foraeldet_begrundelse`, så en visende flade
+// kan vise hvad der engang blev kvitteret for, uden at kunne komme til at fremstille
+// den som gældende.
 export function periodeAfvigelse(saet, grundlag) {
   if (!grundlag?.lease) return null
   const fra = saet?.fra_dato || '', til = saet?.til_dato || ''
   if (fra === grundlag.fra_dato && til === grundlag.til_dato) return null
   const gemtPeriode = { fra_dato: fra, til_dato: til }
+  const afledtPeriode = { fra_dato: grundlag.fra_dato, til_dato: grundlag.til_dato }
+
+  const k = saet?.periode_kvittering
+  const tekst = String(k?.begrundelse ?? '').trim()
+  // En manglende gemt periode kan ikke være kvitteret (ADR-0002), heller ikke selvom
+  // talsættet bærer en kvittering fra dengang den fandtes.
+  const daekker = !!tekst && !manglerPeriode(gemtPeriode)
+    && sammePeriode(k.gemt, gemtPeriode) && sammePeriode(k.afledt, afledtPeriode)
+  const foraeldet = !!tekst && !daekker
+
   return {
-    gemt: { fra_dato: fra, til_dato: til, dage: udlejningsdage(gemtPeriode), dage360: udlejningsdage360(gemtPeriode) },
-    afledt: { fra_dato: grundlag.fra_dato, til_dato: grundlag.til_dato, dage: grundlag.dage, dage360: grundlag.dage360 },
+    gemt: { ...gemtPeriode, dage: udlejningsdage(gemtPeriode), dage360: udlejningsdage360(gemtPeriode) },
+    afledt: { ...afledtPeriode, dage: grundlag.dage, dage360: grundlag.dage360 },
+    kvitteret: daekker,
+    begrundelse: daekker ? tekst : '',
+    foraeldet,
+    foraeldet_begrundelse: foraeldet ? tekst : '',
   }
 }
 

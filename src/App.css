@@ -156,7 +156,7 @@ body {
 .field label { font-size: 13px; color: var(--text-muted); font-weight: 600; }
 .field .hint { font-size: 12px; color: var(--text-muted); font-weight: 400; }
 
-input, select {
+input, select, textarea {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -165,7 +165,8 @@ input, select {
   color: var(--text);
   width: 100%;
 }
-input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea { font-family: inherit; resize: vertical; }
 .input-suffix { position: relative; }
 .input-suffix input { padding-right: 42px; text-align: right; }
 .input-suffix .suffix {
@@ -198,6 +199,10 @@ table.data tr.total td { font-weight: 700; border-top: 2px solid var(--border); 
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; border-radius: 999px; font-size: 13px; font-weight: 600;
 }
+/* Neutral: en oplysning der IKKE er en advarsel — fx en periodeafvigelse der er
+   kvitteret med en begrundelse. Farverne er husets variabler, så den holder i begge
+   temaer, og --border løfter den fra --surface-2-flader uden at lyse. */
+.badge.neutral { background: var(--border); color: var(--text-muted); }
 .badge.ok { background: rgba(47, 158, 95, 0.14); color: var(--ok); }
 .badge.warn { background: rgba(201, 120, 26, 0.14); color: var(--warn); }
 .badge.err { background: rgba(200, 69, 47, 0.14); color: var(--err); }

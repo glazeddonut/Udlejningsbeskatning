@@ -5,7 +5,7 @@ import {
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
-  aarsgrundlag, periodeAfvigelse, gruppeOpgoerelse, manglerPeriode,
+  aarsgrundlag, periodeAfvigelse, periodeKvittering, gruppeOpgoerelse, manglerPeriode,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -324,6 +324,92 @@ test('periodeAfvigelse: opdager drift mellem gemt periode og lejekontrakt', () =
 
   // Ingen kontrakt at afstemme mod → ingen afvigelse (ikke en fejl)
   assert.equal(periodeAfvigelse({ fra_dato: '2025-03-01', til_dato: '2025-12-31' }, aarsgrundlag([], 2025)), null)
+})
+
+// ── Kvittering på en periodeafvigelse ─────────────────────────────────────────
+//
+// Brugerens 2025 har gemt 6. august mod lejekontraktens 5. — den faktiske indflytning
+// skete dagen efter. Afvigelsen er altså rigtig, og advarslen ville ellers stå der for
+// evigt på et korrekt år. Kvitteringen gør den til en neutral note med begrundelsen.
+
+const LEASES = [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31', maanedlig_leje: 6000 }]
+const GEMT = { fra_dato: '2025-08-06', til_dato: '2025-12-31' }
+const BEGRUNDELSE = 'Faktisk indflytning skete 6. august, dagen efter kontraktens start.'
+
+// Et talsæt med en kvittering der er givet for præcis den afvigelse det bærer.
+function kvitteretSaet(saet = GEMT, leases = LEASES) {
+  const afvigelse = periodeAfvigelse(saet, aarsgrundlag(leases, 2025))
+  return { ...saet, periode_kvittering: periodeKvittering(afvigelse, BEGRUNDELSE) }
+}
+
+test('periodeAfvigelse: uden kvittering er afvigelsen ukvitteret', () => {
+  const a = periodeAfvigelse(GEMT, aarsgrundlag(LEASES, 2025))
+  assert.equal(a.kvitteret, false)
+  assert.equal(a.begrundelse, '')
+  assert.equal(a.foraeldet, false)
+})
+
+test('periodeAfvigelse: en begrundelse gør afvigelsen kvitteret', () => {
+  const a = periodeAfvigelse(kvitteretSaet(), aarsgrundlag(LEASES, 2025))
+  assert.ok(a, 'afvigelsen forsvinder ikke — den rapporteres stadig')
+  assert.equal(a.kvitteret, true)
+  assert.equal(a.begrundelse, BEGRUNDELSE)
+  assert.equal(a.foraeldet, false)
+  // Perioden rettes aldrig af en kvittering — begge sæt tal står uændret.
+  assert.equal(a.gemt.fra_dato, '2025-08-06')
+  assert.equal(a.afledt.fra_dato, '2025-08-05')
+  assert.equal(a.gemt.dage360, 145)
+})
+
+test('periodeAfvigelse: en tom begrundelse kvitterer ikke', () => {
+  for (const tekst of ['', '   ', null, undefined]) {
+    assert.equal(periodeKvittering(periodeAfvigelse(GEMT, aarsgrundlag(LEASES, 2025)), tekst), null)
+  }
+  const a = periodeAfvigelse({ ...GEMT, periode_kvittering: { begrundelse: '  ', gemt: GEMT, afledt: { fra_dato: '2025-08-05', til_dato: '2025-12-31' } } }, aarsgrundlag(LEASES, 2025))
+  assert.equal(a.kvitteret, false)
+})
+
+// Kvitteringen må ikke kunne dække over noget nyt: den er bundet til BEGGE de perioder
+// den blev givet for. Ændrer den ene sig, vender advarslen tilbage.
+test('periodeAfvigelse: ændres talsættets periode efter kvitteringen, vender advarslen tilbage', () => {
+  const saet = { ...kvitteretSaet(), fra_dato: '2025-09-01' }     // brugeren flytter fra-datoen
+  const a = periodeAfvigelse(saet, aarsgrundlag(LEASES, 2025))
+  assert.equal(a.kvitteret, false, 'kvitteringen gjaldt 6. august, ikke 1. september')
+  assert.equal(a.begrundelse, '')
+  assert.equal(a.foraeldet, true)
+  assert.equal(a.foraeldet_begrundelse, BEGRUNDELSE)              // teksten tabes ikke tavst
+})
+
+test('periodeAfvigelse: ændres lejekontrakten efter kvitteringen, vender advarslen tilbage', () => {
+  const rettet = [{ id: 1, startdato: '2025-07-01', slutdato: '2025-12-31', maanedlig_leje: 6000 }]
+  const a = periodeAfvigelse(kvitteretSaet(), aarsgrundlag(rettet, 2025))
+  assert.equal(a.kvitteret, false, 'kvitteringen gjaldt kontraktens 5. august, ikke 1. juli')
+  assert.equal(a.foraeldet, true)
+  assert.equal(a.foraeldet_begrundelse, BEGRUNDELSE)
+})
+
+// ADR-0002: en manglende periode gættes ikke — og den forklares heller ikke væk. En
+// kvittering på et fravær ville skrive "— – — (0 dage til skat.dk)" i årsregnskabets note
+// som en bevidst afvigelse: præcis den slags svar der ser legitimt ud, netop når
+// oplysningen mangler. Perioden skal udfyldes, ikke begrundes.
+test('periodeAfvigelse: en manglende periode kan ikke kvitteres væk', () => {
+  const uden = { fra_dato: '', til_dato: '' }
+  const g = aarsgrundlag(LEASES, 2025)
+  assert.equal(periodeKvittering(periodeAfvigelse(uden, g), BEGRUNDELSE), null)
+
+  // Og en kvittering der alligevel ligger i talsættet dækker ikke.
+  const a = periodeAfvigelse({ ...uden, periode_kvittering: { begrundelse: BEGRUNDELSE, gemt: uden, afledt: { fra_dato: '2025-08-05', til_dato: '2025-12-31' } } }, g)
+  assert.equal(a.kvitteret, false)
+  assert.equal(a.foraeldet, true)
+})
+
+test('periodeKvittering binder begrundelsen til begge de perioder den blev givet for', () => {
+  const k = periodeKvittering(periodeAfvigelse(GEMT, aarsgrundlag(LEASES, 2025)), `  ${BEGRUNDELSE}  `)
+  assert.equal(k.begrundelse, BEGRUNDELSE)                        // trimmet
+  assert.deepEqual(k.gemt, { fra_dato: '2025-08-06', til_dato: '2025-12-31' })
+  assert.deepEqual(k.afledt, { fra_dato: '2025-08-05', til_dato: '2025-12-31' })
+  // Uden en afvigelse er der intet at kvittere for.
+  assert.equal(periodeKvittering(null, BEGRUNDELSE), null)
 })
 
 test('udlejningsdage360: SKATs 30/360-konvention (md = 30 dage, år = 360)', () => {
