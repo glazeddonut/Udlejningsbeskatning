@@ -58,6 +58,23 @@ export function leaseForAar(leases, aar) {
   return bedst
 }
 
+// Det årsinterval lejekontrakterne spænder over: tidligste start → seneste slut.
+// `null` i en ende betyder INGEN grænse — enten fordi ingen kontrakt har en dato i den
+// ende, eller (i den øvre) fordi mindst én kontrakt er åben og altså løber videre.
+// Bruges til at afgøre hvilke år der må oprettes, og til at vise intervallet ved
+// indtastningen.
+export function aarsinterval(leases) {
+  const liste = Array.isArray(leases) ? leases : (leases ? [leases] : [])
+  const aarstal = (d) => Number(String(d).slice(0, 4))
+  const starter = liste.map(l => l?.startdato).filter(Boolean).map(aarstal)
+  const slutter = liste.map(l => l?.slutdato).filter(Boolean).map(aarstal)
+  const aabenSlut = liste.length > 0 && slutter.length < liste.length
+  return {
+    foerste: starter.length ? Math.min(...starter) : null,
+    sidste: aabenSlut || !slutter.length ? null : Math.max(...slutter),
+  }
+}
+
 // Udlejningsperioden for et år, klippet til året, udledt af lejekontrakten.
 // Returnerer [fra_dato, til_dato] som ISO-strenge.
 //
@@ -73,6 +90,29 @@ export function periodeForAar(lease, aar) {
   return [ls > ys ? ls : ys, le < ye ? le : ye]   // ISO-datoer sorterer leksikalsk
 }
 
+// Må året oprettes? Ét svar til både serveren og klienten: `{ ok, begrundelse }`.
+// Reglen stod tidligere ordret to steder — i Årets tal og i POST /api/years — med hver
+// sin fejltekst, og ingen af de to kopier var testet.
+export function maaAarOprettes(leases, aar) {
+  const aarN = Number(aar)
+  const nej = (begrundelse) => ({ ok: false, begrundelse })
+  if (!Number.isInteger(aarN) || aarN < 1900 || aarN > 2200) return nej('Angiv et gyldigt årstal')
+  const { foerste, sidste } = aarsinterval(leases)
+  if (foerste !== null && aarN < foerste)
+    return nej(`Lejekontrakterne starter i ${foerste} — ${aarN} kan ikke oprettes`)
+  if (sidste !== null && aarN > sidste)
+    return nej(`Lejekontrakterne slutter i ${sidste} — ${aarN} kan ikke oprettes`)
+  // Hul-året: inden for intervallet, men ingen kontrakt dækker det (CONTEXT.md). Det
+  // blev tidligere accepteret tavst og fik hele kalenderåret som udlejningsperiode —
+  // altså 360 indberetningsdage uden at nogen havde lejet ud (ADR-0002). Spørgsmålet
+  // stilles til leaseForAar, så "må året oprettes" og "hvilken kontrakt gælder i året"
+  // ikke kan svare hver sit. Uden lejekontrakter overhovedet rammer samme regel: der
+  // er ingen periode at udlede, og året ville fødes uden en.
+  if (!leaseForAar(leases, aarN))
+    return nej(`Ingen lejekontrakt dækker ${aarN} — opret lejekontrakten, eller vælg et andet år`)
+  return { ok: true, begrundelse: '' }
+}
+
 // Hvad lejekontrakterne siger om et år — den AFLEDTE sandhed, beregnet ved hvert
 // opslag. Modstykket til det gemte talsæt, som er et øjebliksbillede fra dengang
 // året blev oprettet. Bruges til prefill og til at opdage drift (periodeAfvigelse).
@@ -81,13 +121,61 @@ export function aarsgrundlag(leases, aar) {
   const [fra_dato, til_dato] = periodeForAar(lease, aar)
   const periode = { fra_dato, til_dato }
   return {
-    lease, fra_dato, til_dato,
+    aar, lease, fra_dato, til_dato,
     maanedlig_leje: Number(lease?.maanedlig_leje) || 0,
     vand: Number(lease?.forbrug_aconto?.vand) || 0,
     varme: Number(lease?.forbrug_aconto?.varme) || 0,
     dage: udlejningsdage(periode),
     dage360: udlejningsdage360(periode),
     mangler: manglerPeriode(periode),   // hul-år: ingen kontrakt → ingen periode
+  }
+}
+
+// Talsættet et NYT år fødes med: udlejningsperiode og leje fra den lejekontrakt der
+// gælder i året, grundskyld fra ejendommen og et renteskøn fra lånene.
+//
+// Funktionen lå i skærmkomponenten, hvor kun klienten kunne nå den. Serveren tog derfor
+// imod `budget ?? {}` og lod et år oprettet direkte mod API'et fødes uden periode —
+// præcis den kilde ADR-0002 lukker. Den bor her, så begge veje giver samme talsæt.
+//
+// De løbende poster forudfyldes som MÅNEDSBELØB med pro rata slået til, så
+// udlejningsperioden selv styrer årets beløb. Grundskyld er derimod et årsbeløb.
+export function prefillSaet({ leases, property, loans, aar }) {
+  const s = tomtSaet()
+  const g = aarsgrundlag(leases, aar)
+  s.fra_dato = g.fra_dato
+  s.til_dato = g.til_dato
+  for (const l of loans || []) s.renteudgifter[l.id] = estimeretAarligRente(l)
+  if (g.lease) {
+    s.indtaegter.leje = g.maanedlig_leje
+    s.indtaegter.vand = g.vand
+    s.indtaegter.varme = g.varme
+    s.udgifter.vand = g.vand
+    s.udgifter.varme = g.varme
+    s.prorata = {
+      'indtaegter.leje': true, 'indtaegter.vand': true, 'indtaegter.varme': true,
+      'udgifter.vand': true, 'udgifter.varme': true,
+    }
+  }
+  if (property) s.udgifter.grundskyld = Number(property.grundskyld_aarlig) || 0
+  return s
+}
+
+// Talsættet et nyt år FØDES med, givet det talsæt kalderen måtte have sendt med.
+//
+// Uden et indsendt talsæt er svaret prefillet. Med et indsendt talsæt respekteres det
+// — det er kalderens tal — men en manglende dato udfyldes fra lejekontrakten, så et år
+// aldrig fødes uden udlejningsperiode (ADR-0002). At spørge `budget ?? prefill` var
+// ikke nok: et indsendt `{}` er ikke et fraværende talsæt, og året kom igennem uden
+// periode ad præcis den vej. Kun de datoer der MANGLER udfyldes — har kalderen sagt
+// noget, står det.
+export function saetTilNytAar({ leases, property, loans, aar }, indsendt) {
+  const prefill = prefillSaet({ leases, property, loans, aar })
+  if (!indsendt) return prefill
+  return {
+    ...indsendt,
+    fra_dato: indsendt.fra_dato || prefill.fra_dato,
+    til_dato: indsendt.til_dato || prefill.til_dato,
   }
 }
 

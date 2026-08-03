@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
   aarsgrundlag, periodeAfvigelse, periodeKvittering, gruppeOpgoerelse, manglerPeriode,
-  udlejetAndel, fradragsBeloeb,
+  udlejetAndel, fradragsBeloeb, aarsinterval, maaAarOprettes, prefillSaet, saetTilNytAar,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -713,4 +714,220 @@ test('tomtSaet: uden pro rata er sum = rå værdier (ingen regression)', () => {
   const t = tomtSaet()
   t.indtaegter.leje = 72000
   assert.equal(sumIndtaegter(t), 72000)   // default 12 mdr, ingen prorata → uændret
+})
+
+// ── Hvilke år må oprettes ──────────────────────────────────────────────────────
+//
+// Reglen stod ordret to steder — i Årets tal og i POST /api/years — og ingen af de
+// to kopier var testet. Den bor nu her, så serveren og klienten svarer det samme.
+
+test('aarsinterval: tidligste start → seneste slut på tværs af lejekontrakter', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' },
+    { id: 2, startdato: '2026-01-01', slutdato: '2027-06-30' },
+  ]
+  assert.deepEqual(aarsinterval(leases), { foerste: 2025, sidste: 2027 })
+})
+
+test('aarsinterval: en åben slutdato giver ingen øvre grænse', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' },
+    { id: 2, startdato: '2026-01-01', slutdato: '' },
+  ]
+  assert.deepEqual(aarsinterval(leases), { foerste: 2025, sidste: null })
+})
+
+test('aarsinterval uden lejekontrakter: ingen grænser at udlede', () => {
+  assert.deepEqual(aarsinterval([]), { foerste: null, sidste: null })
+  assert.deepEqual(aarsinterval(null), { foerste: null, sidste: null })
+})
+
+test('maaAarOprettes: et år inden for lejekontrakterne må oprettes', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+  assert.deepEqual(maaAarOprettes(leases, 2026), { ok: true, begrundelse: '' })
+  assert.deepEqual(maaAarOprettes(leases, 2025), { ok: true, begrundelse: '' })
+  assert.deepEqual(maaAarOprettes(leases, 2027), { ok: true, begrundelse: '' })
+})
+
+test('maaAarOprettes: et år før den tidligste lejekontrakt afvises, med året nævnt', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+  assert.deepEqual(maaAarOprettes(leases, 2024), {
+    ok: false, begrundelse: 'Lejekontrakterne starter i 2025 — 2024 kan ikke oprettes',
+  })
+})
+
+test('maaAarOprettes: et år efter den seneste lejekontrakt afvises, med året nævnt', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+  assert.deepEqual(maaAarOprettes(leases, 2028), {
+    ok: false, begrundelse: 'Lejekontrakterne slutter i 2027 — 2028 kan ikke oprettes',
+  })
+})
+
+test('maaAarOprettes: en åben slutdato giver ingen øvre grænse', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' },
+    { id: 2, startdato: '2026-01-01', slutdato: '' },
+  ]
+  assert.equal(maaAarOprettes(leases, 2030).ok, true)
+  assert.equal(maaAarOprettes(leases, 2199).ok, true)
+})
+
+// Hul-året er den vej ind til det 360-tal ADR-0002 fjernede: 2028 blev tavst
+// accepteret af begge implementationer og fik hele kalenderåret som udlejningsperiode.
+test('maaAarOprettes: et hul-år mellem to lejekontrakter afvises, med året nævnt', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' },
+    { id: 2, startdato: '2029-01-01', slutdato: '' },
+  ]
+  assert.deepEqual(maaAarOprettes(leases, 2028), {
+    ok: false, begrundelse: 'Ingen lejekontrakt dækker 2028 — opret lejekontrakten, eller vælg et andet år',
+  })
+  // Årene omkring hullet er uberørte — intervallet alene ville have sagt ja til 2028
+  assert.deepEqual(aarsinterval(leases), { foerste: 2025, sidste: null })
+  assert.equal(maaAarOprettes(leases, 2027).ok, true)
+  assert.equal(maaAarOprettes(leases, 2029).ok, true)
+})
+
+test('maaAarOprettes uden lejekontrakter: intet år kan oprettes', () => {
+  // Uden kontrakt er der ingen periode at udlede, og året ville fødes uden en
+  // (ADR-0002). Prisen er accepteret: lejekontrakten oprettes først.
+  assert.deepEqual(maaAarOprettes([], 2026), {
+    ok: false, begrundelse: 'Ingen lejekontrakt dækker 2026 — opret lejekontrakten, eller vælg et andet år',
+  })
+  assert.equal(maaAarOprettes(null, 2026).ok, false)
+})
+
+test('maaAarOprettes: et årstal der ikke er et årstal afvises før alt andet', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '' }]
+  for (const skrald of ['', 'nej', null, undefined, NaN, 0, 1899, 2201, 2026.5]) {
+    assert.deepEqual(maaAarOprettes(leases, skrald), { ok: false, begrundelse: 'Angiv et gyldigt årstal' },
+      `${String(skrald)} er ikke et årstal`)
+  }
+  assert.equal(maaAarOprettes(leases, '2026').ok, true)   // fra et tekstfelt
+})
+
+// Et år der ikke må oprettes, er præcis et år uden lejekontrakt — de to svar kan ikke
+// komme til at være uenige om hvad der findes en kontrakt for.
+test('maaAarOprettes siger kun ja til år hvor en lejekontrakt findes', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' },
+    { id: 2, startdato: '2029-01-01', slutdato: '2030-12-31' },
+  ]
+  for (let aar = 2023; aar <= 2032; aar++) {
+    assert.equal(maaAarOprettes(leases, aar).ok, leaseForAar(leases, aar) !== null, String(aar))
+  }
+})
+
+// ── Et år fødes med sin udlejningsperiode ──────────────────────────────────────
+//
+// Prefillet lå i skærmkomponenten, så serveren kunne kun tage imod det talsæt
+// klienten sendte — `budget ?? {}`. Et år oprettet direkte mod API'et fødtes uden
+// periode. Prefillet bor nu her, så begge veje giver samme talsæt (ADR-0002).
+
+test('prefillSaet: et nyt år fødes med lejekontraktens periode og leje', () => {
+  const leases = [{
+    id: 1, startdato: '2025-08-05', slutdato: '2025-12-31',
+    maanedlig_leje: 4500, forbrug_aconto: { vand: 300, varme: 300 },
+  }]
+  const s = prefillSaet({
+    leases, aar: 2025,
+    property: { grundskyld_aarlig: 7488 },
+    loans: [{ id: 1, restgaeld: 1000000, rente_pct: 4 }],
+  })
+  assert.equal(s.fra_dato, '2025-08-05')
+  assert.equal(s.til_dato, '2025-12-31')
+  assert.equal(manglerPeriode(s), false)
+  assert.equal(udlejningsdage360(s), 146)      // dagstallet findes fra fødslen
+  assert.equal(s.indtaegter.leje, 4500)        // månedsbeløb …
+  assert.equal(s.prorata['indtaegter.leje'], true)   // … med pro rata slået til
+  assert.equal(s.indtaegter.vand, 300)
+  assert.equal(s.udgifter.varme, 300)
+  assert.equal(s.udgifter.grundskyld, 7488)    // årsbeløb, ingen pro rata
+  assert.equal(s.prorata['udgifter.grundskyld'], undefined)
+  assert.equal(s.renteudgifter[1], 40000)      // skøn: restgæld × rente
+})
+
+test('prefillSaet: hvert grundlag får sit eget talsæt, ikke det samme objekt', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const a = prefillSaet({ leases, aar: 2026 })
+  const b = prefillSaet({ leases, aar: 2026 })
+  assert.deepEqual(a, b)
+  a.indtaegter.leje = 1
+  assert.equal(b.indtaegter.leje, 6000)        // budget og faktisk deler ikke tal
+})
+
+// Reglen skal blive ét sted. Testen læser de to kaldere og fastholder at ingen af dem
+// bærer sin egen kopi — det var netop to ordrette kopier med hver sin fejltekst (den
+// ene med punktum, den anden uden) der gjorde serveren og klienten uenige.
+test('serveren og klienten kalder samme regel — ingen af dem har sin egen fejltekst', () => {
+  const kilde = (sti) => readFileSync(new URL(sti, import.meta.url), 'utf8')
+  for (const fil of ['../../server.js', '../components/AaretsTal.jsx']) {
+    const src = kilde(fil)
+    assert.match(src, /maaAarOprettes/, `${fil} skal spørge beregningslaget`)
+    assert.doesNotMatch(src, /Lejekontrakterne (starter|slutter)/, `${fil} må ikke skrive begrundelsen selv`)
+  }
+  // Og serveren lader årets talsæt fødes med sin periode frem for at tage imod det
+  // som det kommer (ADR-0002). Selve reglen for hvad et nyt år fødes med, er testet
+  // ovenfor — her fastholdes kun at serveren spørger den.
+  assert.match(kilde('../../server.js'), /saetTilNytAar/)
+})
+
+// ── Et allerede oprettet år der bliver et hul-år ───────────────────────────────
+//
+// Reglen gælder OPRETTELSEN. Rettes lejekontrakten bagefter, så et eksisterende år
+// ikke længere er dækket, røres årets gemte tal ikke: de er indtastet af brugeren og
+// kan være indberettet. Appen rapporterer — den retter ikke, og den spærrer ikke for
+// redigering, for så kunne året hverken rettes eller gøres færdigt. Fraværet af en
+// kontrakt er synligt på `lease`/`mangler` i årsgrundlaget, som fladen viser.
+test('et eksisterende år beholder sine egne tal selvom ingen lejekontrakt dækker det', () => {
+  const saet = { fra_dato: '2028-01-01', til_dato: '2028-12-31', indtaegter: { leje: 6000 }, prorata: { 'indtaegter.leje': true } }
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+
+  // Årets gemte periode og beløb er uberørte — intet gættes om, intet nulstilles
+  assert.equal(udlejningsdage(saet), 366)
+  assert.equal(udlejningsdage360(saet), 360)
+  assert.equal(effektivBeloeb(saet, 'indtaegter', 'leje'), 72000)
+
+  // … men året kan ikke oprettes på ny, og grundlaget siger at kontrakten mangler
+  assert.equal(maaAarOprettes(leases, 2028).ok, false)
+  const g = aarsgrundlag(leases, 2028)
+  assert.equal(g.lease, null)
+  assert.equal(g.mangler, true)
+  // Uden kontrakt er der ingen afvigelse at rapportere — der er intet at afstemme mod
+  assert.equal(periodeAfvigelse(saet, g), null)
+})
+
+// `budget ?? prefill` var ikke nok: et indsendt `{}` er ikke fraværende, og året blev
+// født uden periode ad præcis den vej ADR-0002 lukker.
+test('saetTilNytAar: uden indsendt talsæt fødes året med prefillet', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const kontekst = { leases, property: null, loans: [], aar: 2026 }
+  assert.deepEqual(saetTilNytAar(kontekst, undefined), prefillSaet(kontekst))
+  assert.deepEqual(saetTilNytAar(kontekst, null), prefillSaet(kontekst))
+})
+
+test('saetTilNytAar: et indsendt talsæt uden periode får lejekontraktens', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const kontekst = { leases, property: null, loans: [], aar: 2026 }
+  // Et tomt talsæt er ikke et fraværende talsæt — men året fødes stadig med sin periode
+  const tomt = saetTilNytAar(kontekst, {})
+  assert.equal(manglerPeriode(tomt), false)
+  assert.equal(tomt.fra_dato, '2026-01-01')
+  assert.equal(tomt.til_dato, '2026-12-31')
+  // Kun perioden udfyldes — kalderens egne tal prefilles ikke oven i
+  const eget = saetTilNytAar(kontekst, { indtaegter: { leje: 1234 }, til_dato: '2026-06-30' })
+  assert.equal(eget.indtaegter.leje, 1234)
+  assert.equal(eget.fra_dato, '2026-01-01')
+  assert.equal(eget.til_dato, '2026-06-30')   // kalderens egen dato står — kun den manglende udfyldes
+})
+
+test('saetTilNytAar: en indsendt periode overstyres ikke', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const eget = { fra_dato: '2026-02-01', til_dato: '2026-11-30', indtaegter: { leje: 1234 } }
+  assert.deepEqual(saetTilNytAar({ leases, aar: 2026 }, eget), eget)
+})
+
+test('aarsgrundlag bærer selv sit år, så en flade ikke skal have det ved siden af', () => {
+  assert.equal(aarsgrundlag([{ id: 1, startdato: '2026-01-01' }], 2026).aar, 2026)
+  assert.equal(aarsgrundlag([], 2028).aar, 2028)
 })

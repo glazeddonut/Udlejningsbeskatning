@@ -3,51 +3,13 @@ import { api } from '../lib/api.js'
 import { parseNum, kr, daNum, pct } from '../lib/format.js'
 import { NumberField, TextField } from './fields.jsx'
 import {
-  tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
+  sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling, gruppeOpgoerelse,
   udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
   prorataMaaneder, aarsgrundlag, periodeAfvigelse, periodeKvittering, manglerPeriode,
-  udlejetAndel,
+  udlejetAndel, aarsinterval, maaAarOprettes,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
-
-// År udledt af lejekontrakterne: [minÅr, maxÅr]. Tidligste start → seneste slut.
-// maxÅr = null hvis mindst én kontrakt er åben (ingen slutdato).
-function tilladteAar(leases) {
-  const liste = leases || []
-  const starter = liste.map(l => l.startdato).filter(Boolean).map(d => Number(d.slice(0, 4)))
-  const slutter = liste.map(l => l.slutdato).filter(Boolean).map(d => Number(d.slice(0, 4)))
-  const aabenSlut = liste.length > 0 && slutter.length < liste.length
-  const min = starter.length ? Math.min(...starter) : null
-  const max = aabenSlut || !slutter.length ? null : Math.max(...slutter)
-  return [min, max]
-}
-
-// Nyt talsæt med fornuftige defaults fra stamdata (leje, forbrug, grundskyld).
-function prefillSaet({ leases, property, loans, aar }) {
-  const s = tomtSaet()
-  // Periode og leje udledes af den kontrakt der gælder i året (ét sted: aarsgrundlag).
-  const g = aarsgrundlag(leases, aar)
-  s.fra_dato = g.fra_dato
-  s.til_dato = g.til_dato
-  // Renter estimeres fra lånenes restgæld × rente (budget-skøn; rettes med faktiske tal).
-  ;(loans || []).forEach(l => { s.renteudgifter[l.id] = estimeretAarligRente(l) })
-  if (g.lease) {
-    // Løbende poster forudfyldes som MÅNEDSBELØB med pro rata slået til,
-    // så udlejningsperioden automatisk styrer årets beløb.
-    s.indtaegter.leje = g.maanedlig_leje
-    s.indtaegter.vand = g.vand
-    s.indtaegter.varme = g.varme
-    s.udgifter.vand = g.vand
-    s.udgifter.varme = g.varme
-    s.prorata = {
-      'indtaegter.leje': true, 'indtaegter.vand': true, 'indtaegter.varme': true,
-      'udgifter.vand': true, 'udgifter.varme': true,
-    }
-  }
-  if (property) s.udgifter.grundskyld = Number(property.grundskyld_aarlig) || 0  // årsbeløb
-  return s
-}
 
 export default function AaretsTal({ years, persons, property, loans, leases, settings, reload }) {
   const sorterede = [...years].sort((a, b) => b.aar - a.aar)
@@ -70,23 +32,38 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     }
   }, [valgtAar, years])
 
-  const [minAar, maxAar] = tilladteAar(leases)
+  const { foerste: minAar, sidste: maxAar } = aarsinterval(leases)
   const startOpret = () => {
     let forslag = sorterede[0] ? sorterede[0].aar + 1 : (minAar || new Date().getFullYear())
     if (minAar && forslag < minAar) forslag = minAar
     if (maxAar && forslag > maxAar) forslag = maxAar
+    // Forslaget må ikke være et år reglen selv afviser — fx et hul-år mellem to
+    // lejekontrakter. Gå frem til det første år der kan oprettes; findes der ingen,
+    // står det oprindelige forslag, og fejlen forklarer hvorfor.
+    for (let k = forslag; k <= forslag + 50; k++) {
+      if (maaAarOprettes(leases, k).ok) { forslag = k; break }
+    }
     setNyAar(String(forslag))
     setOpretFejl('')
     setVisOpret(true)
   }
+  // Reglen for hvilke år der må oprettes bor i beregningslaget og spørges her, så fejlen
+  // vises med det samme — uden at skulle kalde serveren. Serveren spørger samme funktion,
+  // så teksten er den samme uanset hvor grænsen rammes. Fejler kaldet alligevel (fx et
+  // andet vindue nåede at oprette året), vises serverens egen tekst frem for tavshed.
   const bekraeftOpret = async () => {
     const aar = Number(nyAar)
-    if (!aar || aar < 1900 || aar > 2200) { setOpretFejl('Angiv et gyldigt årstal.'); return }
-    if (minAar && aar < minAar) { setOpretFejl(`Lejekontrakterne starter i ${minAar} — tidligere år kan ikke oprettes.`); return }
-    if (maxAar && aar > maxAar) { setOpretFejl(`Lejemålet slutter i ${maxAar} — senere år kan ikke oprettes.`); return }
-    if (years.find(y => y.aar === aar)) { setOpretFejl('Året findes allerede.'); return }
-    const start = prefillSaet({ leases, property, loans, aar })
-    await api.post('/years', { aar, budget: start, faktisk: start })
+    const svar = maaAarOprettes(leases, aar)
+    if (!svar.ok) { setOpretFejl(svar.begrundelse); return }
+    if (years.find(y => y.aar === aar)) { setOpretFejl('Året findes allerede'); return }
+    // Talsættet bygges af serveren (saetTilNytAar), så et år får samme periode og samme
+    // prefill uanset om det oprettes herfra eller direkte mod API'et (ADR-0002).
+    try {
+      await api.post('/years', { aar })
+    } catch (e) {
+      setOpretFejl(e.message)
+      return
+    }
     setVisOpret(false)
     setValgtAar(aar)
     reload()
@@ -416,6 +393,23 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
             suffix="%"
           />
         </div>
+        {/* Et hul-år kan ikke længere OPRETTES, men et år kan blive et: rettes
+            lejekontrakten bagefter, står året tilbage uden en kontrakt der dækker det.
+            Årets tal røres ikke — de er indtastet og kan være indberettet — men
+            fraværet siges højt, så et dagstal til skat.dk ikke står uden hjemmel.
+            Baggrunden er --surface-2, som findes i begge temaer. */}
+        {!grundlag?.lease && (
+          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+            <p style={{ margin: 0 }}><span className="badge warn">Ingen lejekontrakt dækker {grundlag.aar}</span></p>
+            <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+              Året er oprettet, men ingen af lejekontrakterne dækker det — enten er kontrakten
+              rettet siden, eller året stammer fra før hul-år blev afvist. Tallene herunder er
+              dine egne og røres ikke. Opret den lejekontrakt der gælder for {grundlag.aar}, eller slet
+              året, hvis der ikke blev lejet ud.
+            </p>
+          </div>
+        )}
+
         {/* Uden periode vises flaget i stedet for et dagstal (ADR-0002). Et "0 dage"
             eller det tidligere 360 ville begge være svar appen selv havde fundet på. */}
         {manglerPeriode(saet) ? (

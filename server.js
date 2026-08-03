@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from '
 import { fileURLToPath } from 'url'
 import { dirname, join, extname } from 'path'
 import { bilagForAar, medBilagsnumre, migrerBilag } from './src/lib/bilag.js'
+import { maaAarOprettes, saetTilNytAar } from './src/lib/beregning.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // DB-sti kan overrides med env var (peg på en persistent volume i container)
@@ -200,20 +201,22 @@ app.post('/api/years', (req, res) => {
   const db = loadDb()
   const { aar, budget, faktisk } = req.body
   const aarN = Number(aar)
+  // Lejekontrakterne afgør hvilke år der kan oprettes — reglen selv bor i
+  // beregningslaget, så serveren og klienten svarer med samme tekst (ADR-0002).
+  const svar = maaAarOprettes(db.leases, aarN)
+  if (!svar.ok) return res.status(400).json({ error: svar.begrundelse })
   if (db.years.find(y => y.aar === aarN))
     return res.status(400).json({ error: 'Året findes allerede' })
-  // Lejekontrakterne afgør hvilke år der kan oprettes: tidligste start → seneste slut.
-  const starter = db.leases.map(l => l.startdato).filter(Boolean)
-  const slutter = db.leases.map(l => l.slutdato).filter(Boolean)
-  const minAar = starter.length ? Math.min(...starter.map(d => Number(d.slice(0, 4)))) : null
-  // Åben slutdato på mindst én kontrakt → ingen øvre grænse.
-  const aabenSlut = db.leases.length > 0 && slutter.length < db.leases.length
-  const maxAar = aabenSlut || !slutter.length ? null : Math.max(...slutter.map(d => Number(d.slice(0, 4))))
-  if (minAar !== null && aarN < minAar)
-    return res.status(400).json({ error: `Lejekontrakterne starter i ${minAar} — tidligere år kan ikke oprettes` })
-  if (maxAar !== null && aarN > maxAar)
-    return res.status(400).json({ error: `Lejemålet slutter i ${maxAar} — senere år kan ikke oprettes` })
-  const year = { id: db.nextYearId++, aar: Number(aar), budget: budget ?? {}, faktisk: faktisk ?? {} }
+  // Årets udlejningsperiode udledes af lejekontrakten HER, frem for at året fødes med
+  // det talsæt klienten måtte have sendt. Et år oprettet direkte mod API'et får derfor
+  // også sin periode — også når kalderen sender et tomt talsæt (ADR-0002). Hvert
+  // grundlag gøres op for sig, så budget og faktisk ikke deler tal.
+  const kontekst = { leases: db.leases, property: db.property, loans: db.loans, aar: aarN }
+  const year = {
+    id: db.nextYearId++, aar: aarN,
+    budget: saetTilNytAar(kontekst, budget),
+    faktisk: saetTilNytAar(kontekst, faktisk),
+  }
   db.years.push(year)
   saveDb(db)
   res.json(year)
