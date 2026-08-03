@@ -15,8 +15,8 @@ export default function Indstillinger({ settings, fieldMappings, years, reload }
   const [dirty, setDirty] = useState(false)
   const upd = (patch) => { setS({ ...s, ...patch }); setDirty(true) }
   const [fejl, setFejl] = useState('')
-  // Markedsleje-advarslen er en procent, og feltmapping-året et årstal. Afviser
-  // serveren dem, skal det ses frem for at knappen bare ikke gør noget.
+  // Markedsleje-advarslen er en procent og bundgrænsen et beløb. Afviser serveren
+  // dem, skal det ses frem for at knappen bare ikke gør noget.
   const gem = async () => {
     try { await api.put('/settings', s) } catch (e) { setFejl(e.message); return }
     setFejl(''); setDirty(false); reload()
@@ -33,7 +33,10 @@ export default function Indstillinger({ settings, fieldMappings, years, reload }
         <h2>Skatteordning</h2>
         <h3>Denne app er bygget til de almindelige regler (forældrekøb, kun nærtstående).</h3>
         <div className="grid">
-          <NumberField label="Feltmapping-år" hint="hvilket års default-felter der bruges" value={s.feltmapping_aar} onChange={v => upd({ feltmapping_aar: parseNum(v) })} suffix="" />
+          {/* Her stod tidligere "Feltmapping-år". Den er fjernet: året er allerede sandheden —
+              Skatteindberetningen slår altid op på det valgte år og skriver selv hvilket års
+              feltnumre tallene blev oversat med. Indstillingen kunne kun komme til at pege et
+              andet sted hen end det der faktisk blev brugt. Genindsæt den ikke. */}
           <NumberField label="Gaveafgift, bundgrænse pr. giver" hint="VERIFICÉR pr. år" value={s.gaveafgift_bundgraense} onChange={v => upd({ gaveafgift_bundgraense: parseNum(v) })} />
           <NumberField label="Markedsleje-advarsel" hint="advar hvis leje er mere end X % under markedsleje" value={s.markedsleje_advarsel_pct} onChange={v => upd({ markedsleje_advarsel_pct: parseNum(v) })} suffix="%" />
         </div>
@@ -43,28 +46,30 @@ export default function Indstillinger({ settings, fieldMappings, years, reload }
         </div>
       </div>
 
-      <FeltmappingEditor fieldMappings={fieldMappings} years={years} settings={settings} reload={reload} />
+      <FeltmappingEditor fieldMappings={fieldMappings} years={years} reload={reload} />
     </>
   )
 }
 
-function FeltmappingEditor({ fieldMappings, years, settings, reload }) {
-  // Tilgængelige år: både dem der findes i data og default-årene.
+function FeltmappingEditor({ fieldMappings, years, reload }) {
+  // Tilgængelige år: dem der findes i data, default-årene, og de år der allerede er
+  // rettet i DB'en. (Årslisten hentede tidligere også indstillingen `feltmapping_aar`;
+  // den findes ikke længere — overrides-nøglerne dækker samme behov og er ægte data.)
   const aarSet = new Set([
     ...years.map(y => y.aar),
     ...Object.keys(DEFAULT_FELTMAPPING).map(Number),
-    settings?.feltmapping_aar,
-  ].filter(Boolean))
+    ...Object.keys(fieldMappings || {}).map(k => Number(String(k).split('-')[0])),
+  ].filter(a => Number.isFinite(a)))
   const aarListe = [...aarSet].sort((a, b) => b - a)
 
   const [aar, setAar] = useState(aarListe[0])
   const [doktype, setDoktype] = useState('forskud')
-  const [raekker, setRaekker] = useState(() => hentFeltmapping(aarListe[0], 'forskud', fieldMappings).map(r => ({ ...r })))
+  const [raekker, setRaekker] = useState(() => hentFeltmapping(aarListe[0], 'forskud', fieldMappings).felter.map(r => ({ ...r })))
   const [dirty, setDirty] = useState(false)
 
   const skift = (nyAar, nyDoktype) => {
     setAar(nyAar); setDoktype(nyDoktype)
-    setRaekker(hentFeltmapping(nyAar, nyDoktype, fieldMappings).map(r => ({ ...r })))
+    setRaekker(hentFeltmapping(nyAar, nyDoktype, fieldMappings).felter.map(r => ({ ...r })))
     setDirty(false)
   }
 
@@ -83,7 +88,7 @@ function FeltmappingEditor({ fieldMappings, years, settings, reload }) {
     const key = `${aar}-${doktype}`
     const { [key]: _fjernet, ...resten } = fieldMappings
     await api.put('/field-mappings', resten)
-    setRaekker(hentFeltmapping(aar, doktype, resten).map(r => ({ ...r })))
+    setRaekker(hentFeltmapping(aar, doktype, resten).felter.map(r => ({ ...r })))
     setDirty(false)
     reload()
   }

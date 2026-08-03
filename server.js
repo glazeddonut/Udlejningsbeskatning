@@ -20,7 +20,11 @@ if (!existsSync(BILAG_DIR)) mkdirSync(BILAG_DIR, { recursive: true })
 // Den juridiske vejledning pr. år før de bruges — se README + Indstillinger.
 const DEFAULT_SETTINGS = {
   skatteordning: 'almindelige',      // forældrekøb kun til nærtstående → almindelige regler
-  feltmapping_aar: 2026,             // hvilket års default-feltmapping der bruges
+  // Her stod tidligere `feltmapping_aar`. Feltmappingen slås op på det år brugeren har
+  // valgt, og Skatteindberetningen skriver selv hvilket års feltnumre der faktisk blev
+  // brugt — en indstilling oveni kunne kun pege et andet sted hen end virkeligheden.
+  // Ældre DB'er kan stadig bære nøglen; loadDb sletter den ved indlæsning. (Bemærk:
+  // validerIndstillinger tjekker den fortsat — et tomt tjek nu, som ryddes særskilt.)
   gaveafgift_bundgraense: 76900,     // kr. pr. giver pr. modtager (VERIFICÉR pr. år)
   markedsleje_advarsel_pct: 5,       // advar hvis aftalt leje er > X% under markedsleje
   fordeling_mode: 'alt_paa_en',      // 'alt_paa_en' (§25 A) | 'del' (§25 A stk. 8)
@@ -78,6 +82,10 @@ function loadDb() {
 
     // Merge settings med defaults (tilføjer nye nøgler hvis de mangler)
     db.settings = { ...DEFAULT_SETTINGS, ...(db.settings ?? {}) }
+    // Fjern det udgåede feltmapping-år. Det var en anden sandhed ved siden af det år
+    // brugeren faktisk står i, og ingen læste det længere — samme slags oprydning som
+    // bilagenes gemte numre ovenfor: nøglen bliver ikke stående og lyver på disken.
+    delete db.settings.feltmapping_aar
 
     return db
   } catch { return emptyDb() }

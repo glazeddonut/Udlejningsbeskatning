@@ -67,16 +67,37 @@ export const DEFAULT_FELTMAPPING = {
   },
 }
 
-// Hent feltmapping for et år + doktype. Rækkefølge: overrides → default for året →
+// Hent feltmappingen for et år + doktype. Rækkefølge: overrides → default for året →
 // nærmeste tidligere definerede år → ellers ældste definerede år (fallback opad).
+//
+// Svaret bærer felterne SAMMEN MED deres herkomst, og det er med vilje: der findes i dag
+// kun defaults for ét år, så ethvert andet år arver dem. Returnerede funktionen bare
+// rækkerne, kunne en flade vise en pæn liste feltnumre for 2027 uden at kunne skrive at
+// de er 2026's — netop den tavse fejl på projektets højeste risikopunkt. Nu kan man ikke
+// få fat i `felter` uden også at have `kildeAar` i hånden.
+//
+//   aar       — året der blev spurgt om
+//   felter    — rækkerne der faktisk gælder
+//   kildeAar  — det år rækkerne stammer fra (null hvis der slet ingen findes)
+//   egetAar   — er kilden årets egen mapping? false ⇒ arvet og uverificeret for `aar`
+//   rettet    — kommer rækkerne fra brugerens egne overrides i DB'en? ("rette feltnumre"
+//               er editorens eget ord for det, se Indstillinger)
 export function hentFeltmapping(aar, doktype, overrides = {}) {
+  const medHerkomst = (felter, kildeAar, rettet) =>
+    ({ aar, felter, kildeAar, egetAar: kildeAar != null && kildeAar === aar, rettet })
+
+  // En override er brugerens egen mapping for præcis dette år — altså årets egen kilde.
   const key = `${aar}-${doktype}`
-  if (overrides[key]?.length) return overrides[key]
-  if (DEFAULT_FELTMAPPING[aar]?.[doktype]) return DEFAULT_FELTMAPPING[aar][doktype]
+  if (overrides[key]?.length) return medHerkomst(overrides[key], aar, true)
+
+  if (DEFAULT_FELTMAPPING[aar]?.[doktype]) return medHerkomst(DEFAULT_FELTMAPPING[aar][doktype], aar, false)
+
   const aarKeys = Object.keys(DEFAULT_FELTMAPPING).map(Number).sort((a, b) => a - b)
   const tidligere = aarKeys.filter(y => y <= aar).sort((a, b) => b - a)
   const kandidat = tidligere[0] ?? aarKeys[0]   // foretræk ≤ aar, ellers ældste definerede
-  return (kandidat != null && DEFAULT_FELTMAPPING[kandidat]?.[doktype]) || []
+  const arvet = kandidat != null ? DEFAULT_FELTMAPPING[kandidat]?.[doktype] : null
+  // Findes der slet ingen rækker, siges det — `kildeAar: null` er "ingen kilde", ikke et år.
+  return arvet ? medHerkomst(arvet, kandidat, false) : medHerkomst([], null, false)
 }
 
 // Personens rolle i feltmappingen: den beskattede får 'beskattet'-felter, den anden

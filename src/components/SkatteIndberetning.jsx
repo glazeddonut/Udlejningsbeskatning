@@ -35,7 +35,11 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
   const dt = DOKTYPER.find(d => d.id === doktype)
   const saet = year ? normaliserSaet(year[dt.saetNoegle]) : null
   const opg = saet ? personOpgoerelse(saet, { persons, property, loans, fordeling }) : []
-  const felter = hentFeltmapping(valgtAar, doktype, fieldMappings)
+  // Feltmappingen kommer med sin herkomst: hvilket års feltnumre tallene faktisk er
+  // oversat med. Der findes i dag kun defaults for ét år, så ethvert andet år arver dem —
+  // og det skal stå på fladen, ikke ske tavst.
+  const mapping = hentFeltmapping(valgtAar, doktype, fieldMappings)
+  const felter = mapping.felter
 
   // Sortér så den beskattede vises først (som "Indberetter 2" hos Reportability).
   const opgSorteret = [...opg].sort((a, b) => (b.erBeskattet ? 1 : 0) - (a.erBeskattet ? 1 : 0))
@@ -101,18 +105,16 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
           </p>
         </div>
         {year && <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>{dt.note}</p>}
+        {year && <FeltmappingHerkomst mapping={mapping} doktypeLabel={dt.label} />}
         {/* Uden udlejningsperiode er der intet dagstal at indberette — og appen gætter
             ikke ét, heller ikke selvom 360 ville se rigtigt ud (ADR-0002). */}
         {year && manglerPeriode(saet) && (
-          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
-            <p style={{ margin: 0 }}><span className="badge warn">Periode mangler</span></p>
-            <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
-              Udlejningsperioden mangler i dette grundlag, så dagsfelterne (748 / 207) kan ikke
-              beregnes og indberettes ikke. Beløb der er tastet “pr. måned” fordeles også efter
-              perioden og regnes uden den som et helt år — kontrollér resultatfelterne, før I
-              indberetter dem. Udfyld fra- og til-dato under “Årets tal”.
-            </p>
-          </div>
+          <Advarselsboks badge="Periode mangler">
+            Udlejningsperioden mangler i dette grundlag, så dagsfelterne (748 / 207) kan ikke
+            beregnes og indberettes ikke. Beløb der er tastet “pr. måned” fordeles også efter
+            perioden og regnes uden den som et helt år — kontrollér resultatfelterne, før I
+            indberetter dem. Udfyld fra- og til-dato under “Årets tal”.
+          </Advarselsboks>
         )}
       </div>
 
@@ -172,6 +174,60 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
         )
       })}
     </>
+  )
+}
+
+// Feltmappingens herkomst. Der skal ALTID stå hvilket års feltnumre tallene er oversat
+// med — også når det er årets eget, for det er den oplysning der gør det muligt at se at
+// det ikke er. Er kilden et andet år, markeres det: felterne er da uverificerede for det
+// valgte år, og samme nummer kan betyde noget andet i et andet års skema (CLAUDE.md's
+// tre faldgruber). Er kilden årets egen, vises ingen advarsel.
+function FeltmappingHerkomst({ mapping, doktypeLabel }) {
+  const { aar, kildeAar, egetAar, rettet } = mapping
+  const doktypeTekst = doktypeLabel.toLowerCase()
+
+  // Kilden er årets egen — én linje, ingen advarsel.
+  if (egetAar) {
+    return (
+      <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 13 }}>
+        <span className="badge neutral" style={{ marginRight: 6 }}>Feltmapping {kildeAar}</span>
+        {rettet
+          ? `Jeres egne feltnumre for ${aar} (rettet under Indstillinger).`
+          : `Felt- og rubriknumrene nedenfor er ${aar}-skemaets.`}
+      </p>
+    )
+  }
+
+  // Samme kasse som "Periode mangler" ovenfor — herkomst der kræver handling ser ens ud.
+  return (
+    <Advarselsboks badge={kildeAar == null
+      ? 'Ingen feltmapping'
+      : `Feltmapping ${kildeAar} — uverificeret for ${aar}`}>
+      {kildeAar == null ? (
+        <>
+          Der findes ingen feltmapping til {doktypeTekst} — hverken for {aar} eller for noget
+          andet år, så der er intet at indberette efter. Opret feltnumrene under Indstillinger
+          → skat.dk-feltnumre.
+        </>
+      ) : (
+        <>
+          Der findes ingen feltmapping for {aar}, så tallene nedenfor er oversat med{' '}
+          {kildeAar}-skemaets felt- og rubriknumre. De er ikke kontrolleret mod {doktypeTekst}n
+          for {aar}. Samme nummer kan betyde noget andet i et andet år — verificér hvert nummer
+          mod {aar}-skemaet på skat.dk, og ret dem under Indstillinger → skat.dk-feltnumre.
+          Beløbene og dagene er beregnet for {aar} og er upåvirkede.
+        </>
+      )}
+    </Advarselsboks>
+  )
+}
+
+function Advarselsboks({ badge, children }) {
+  return (
+    <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+      <p style={{ margin: 0 }}><span className="badge warn">{badge}</span></p>
+      <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>{children}</p>
+    </div>
   )
 }
 

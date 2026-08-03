@@ -4,38 +4,100 @@ import { hentFeltmapping, felterForRolle, feltRolle, evalKilde } from './feltmap
 import { fradragsBeloeb } from './beregning.js'
 
 test('hentFeltmapping: bruger defaults for det definerede år', () => {
-  assert.ok(hentFeltmapping(2026, 'forskud').length > 0)
-  assert.ok(hentFeltmapping(2026, 'selvangivelse').length > 0)
+  assert.ok(hentFeltmapping(2026, 'forskud').felter.length > 0)
+  assert.ok(hentFeltmapping(2026, 'selvangivelse').felter.length > 0)
+})
+
+// Har året sin egen feltmapping, er der intet at advare om — herkomsten er året selv.
+test('hentFeltmapping: årets egen mapping rapporterer året som kilde og markeres ikke', () => {
+  for (const doktype of ['forskud', 'selvangivelse']) {
+    const m = hentFeltmapping(2026, doktype)
+    assert.equal(m.kildeAar, 2026, doktype)
+    assert.equal(m.egetAar, true, doktype)
+    assert.equal(m.rettet, false, doktype)
+  }
 })
 
 test('hentFeltmapping: falder tilbage til nærmeste år for udefineret år (også tidligere)', () => {
   // 2025 er ikke defineret, men skal arve 2026-mappingen (fallback opad).
-  assert.ok(hentFeltmapping(2025, 'forskud').length > 0)
+  assert.ok(hentFeltmapping(2025, 'forskud').felter.length > 0)
   // Fremtidigt år arver også seneste kendte.
-  assert.ok(hentFeltmapping(2030, 'selvangivelse').length > 0)
+  assert.ok(hentFeltmapping(2030, 'selvangivelse').felter.length > 0)
+})
+
+// Kernen i ticketen: fallbacket må ikke være tavst. Både det år der blev spurgt om og
+// det år felterne faktisk kommer fra skal kunne skrives på fladen.
+test('hentFeltmapping: arvet mapping rapporterer sit rigtige kildeår og markeres', () => {
+  for (const aar of [2025, 2027, 2030]) {
+    const m = hentFeltmapping(aar, 'forskud')
+    assert.equal(m.aar, aar)
+    assert.equal(m.kildeAar, 2026, `${aar} arver 2026`)
+    assert.equal(m.egetAar, false, `${aar} er ikke sit eget år`)
+    assert.equal(m.rettet, false, `${aar}`)
+  }
 })
 
 test('hentFeltmapping: overrides vinder over defaults', () => {
   const overrides = { '2026-forskud': [{ felt_nr: 'X', label: 'Test', kilde: 'resultat', rolle: 'begge' }] }
-  assert.equal(hentFeltmapping(2026, 'forskud', overrides)[0].felt_nr, 'X')
+  assert.equal(hentFeltmapping(2026, 'forskud', overrides).felter[0].felt_nr, 'X')
+})
+
+// En override er brugerens egen, verificerede mapping for præcis det år — så er herkomsten
+// årets egen, også for et år uden defaults, og der advares ikke.
+test('hentFeltmapping: en override gør året til sin egen kilde — også hvor der ingen defaults er', () => {
+  const raekke = [{ felt_nr: 'X', label: 'Test', kilde: 'resultat', rolle: 'begge' }]
+  const m = hentFeltmapping(2027, 'forskud', { '2027-forskud': raekke })
+  assert.equal(m.kildeAar, 2027)
+  assert.equal(m.egetAar, true)
+  assert.equal(m.rettet, true)
+  // En override for et andet år smitter ikke af på det valgte.
+  const andet = hentFeltmapping(2027, 'selvangivelse', { '2027-forskud': raekke })
+  assert.equal(andet.kildeAar, 2026)
+  assert.equal(andet.egetAar, false)
+  assert.equal(andet.rettet, false)
+})
+
+// Er der intet at falde tilbage på, siges det også. `kildeAar: null` betyder "ingen
+// kilde" og adskiller sig fra et årstal — fladen må ikke kunne komme til at skrive et
+// kildeår den ikke har.
+test('hentFeltmapping: uden rækker overhovedet er der ingen kilde', () => {
+  const m = hentFeltmapping(2026, 'et-skema-der-ikke-findes')
+  assert.deepEqual(m.felter, [])
+  assert.equal(m.kildeAar, null)
+  assert.equal(m.egetAar, false)
+  assert.equal(m.rettet, false)
+})
+
+// Ticketen gør fallbacket synligt — den ændrer ikke et eneste feltnummer. Denne test
+// er låsen om det: retter nogen et nummer her, skal det ske bevidst og verificeret
+// mod skat.dk for netop den opgørelse (se CLAUDE.md's tre faldgruber).
+test('hentFeltmapping: 2026-feltnumrene er uændrede', () => {
+  assert.deepEqual(
+    hentFeltmapping(2026, 'forskud').felter.map(f => f.felt_nr),
+    ['221', '435', '481', '488', '481', '748', '744', '699'],
+  )
+  assert.deepEqual(
+    hentFeltmapping(2026, 'selvangivelse').felter.map(f => f.felt_nr),
+    ['42', '42', '207', '699', '111', '112', '117', '300', '638', '301/302'],
+  )
 })
 
 test('felterForRolle: overskud viser 111/221, ikke 112/435', () => {
-  const felter = hentFeltmapping(2026, 'selvangivelse')
+  const felter = hentFeltmapping(2026, 'selvangivelse').felter
   const overskud = felterForRolle(felter, 'beskattet', true).map(f => f.felt_nr)
   assert.ok(overskud.includes('111'))
   assert.ok(!overskud.includes('112'))
 })
 
 test('felterForRolle: underskud viser 112/435, ikke 111/221', () => {
-  const felter = hentFeltmapping(2026, 'selvangivelse')
+  const felter = hentFeltmapping(2026, 'selvangivelse').felter
   const underskud = felterForRolle(felter, 'beskattet', false).map(f => f.felt_nr)
   assert.ok(underskud.includes('112'))
   assert.ok(!underskud.includes('111'))
 })
 
 test('felterForRolle: ikke-beskattet ser ikke rubrik 117 (kun beskattet)', () => {
-  const felter = hentFeltmapping(2026, 'selvangivelse')
+  const felter = hentFeltmapping(2026, 'selvangivelse').felter
   const ikke = felterForRolle(felter, 'ikke_beskattet', true).map(f => f.felt_nr)
   assert.ok(!ikke.includes('117'))
 })
