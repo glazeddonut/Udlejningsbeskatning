@@ -16,7 +16,7 @@
 //
 // "kilde" evalueres pr. person i evalKilde nedenfor.
 
-import { udlejningsdage, udlejningsdage360 } from './beregning.js'
+import { udlejningsdage, udlejningsdage360, manglerPeriode } from './beregning.js'
 
 // `naar`: 'overskud' vises kun når personens resultat ≥ 0; 'underskud' kun når < 0.
 // (Verificeret mod skat.dk juli 2026: forskud 221/435, 481, 699; oplysningsskema 111/112, 117, 42, 699.)
@@ -103,8 +103,11 @@ export function evalKilde(kilde, { personOpg, saet, person }) {
     case 'resultat': return Math.round(personOpg?.resultatAndel || 0)
     case 'renter_beskattet': return Math.round(personOpg?.renter || 0)
     case 'renter_flyt': return Math.round(personOpg?.renterFysisk || 0)
-    case 'udlejningsdage': return udlejningsdage(saet)
-    case 'udlejningsdage360': return udlejningsdage360(saet)
+    // Uden udlejningsperiode findes der ingen værdi at indberette (ADR-0002). null
+    // betyder "ingen værdi" og adskiller sig fra 0, som ville være et tal brugeren
+    // kunne komme til at taste ind i felt 748 / rubrik 207. Fladen skriver flaget.
+    case 'udlejningsdage': return manglerPeriode(saet) ? null : udlejningsdage(saet)
+    case 'udlejningsdage360': return manglerPeriode(saet) ? null : udlejningsdage360(saet)
     case 'udlejet_andel_pct': return Math.round(Number(saet?.udlejet_andel_pct) || 0)
     case 'naertstaaende': return saet?.naertstaaende ? 'Ja' : 'Nej'
     case 'cpr': return person?.cpr || '(indtast CVR/SE eller CPR)'

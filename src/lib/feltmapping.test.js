@@ -50,3 +50,21 @@ test('evalKilde: renter_flyt bruger renterFysisk, renter_beskattet bruger renter
   assert.equal(evalKilde('renter_beskattet', { personOpg }), 42380)
   assert.equal(evalKilde('renter_flyt', { personOpg }), 21190)
 })
+
+test('evalKilde: dagsfelterne er 30/360 for en oplyst periode', () => {
+  const saet = { fra_dato: '2025-08-06', til_dato: '2025-12-31' }
+  assert.equal(evalKilde('udlejningsdage360', { saet }), 145)   // felt 748 / rubrik 207
+  assert.equal(evalKilde('udlejningsdage', { saet }), 148)      // faktiske kalenderdage
+  const heltAar = { fra_dato: '2026-01-01', til_dato: '2026-12-31' }
+  assert.equal(evalKilde('udlejningsdage360', { saet: heltAar }), 360)
+})
+
+// ADR-0002: uden udlejningsperiode er der ingen værdi at indberette i felt 748 /
+// rubrik 207. Kilden svarer null — ikke 0 og navnlig ikke 360 — så fladen skriver
+// "periode mangler" og ikke tilbyder brugeren et tal at kopiere ind på skat.dk.
+test('evalKilde: uden periode indberettes intet dagstal', () => {
+  for (const saet of [{}, { fra_dato: '2025-08-06' }, { til_dato: '2025-12-31' }, { fra_maaned: 1, til_maaned: 12 }]) {
+    assert.equal(evalKilde('udlejningsdage360', { saet }), null)
+    assert.equal(evalKilde('udlejningsdage', { saet }), null)
+  }
+})

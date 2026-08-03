@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../lib/api.js'
 import { tal } from '../lib/format.js'
 import { normaliserSaet } from '../lib/saet.js'
-import { personOpgoerelse, resolveFordeling } from '../lib/beregning.js'
+import { personOpgoerelse, resolveFordeling, manglerPeriode } from '../lib/beregning.js'
 import { hentFeltmapping, evalKilde, feltRolle, felterForRolle } from '../lib/feltmapping.js'
 
 const DOKTYPER = [
@@ -10,7 +10,11 @@ const DOKTYPER = [
   { id: 'selvangivelse', label: 'Selvangivelse', saetNoegle: 'faktisk', note: 'Bagudrettet, faktiske tal (oplysningsskema).' },
 ]
 
+// `kopi: null` betyder "ingen værdi at kopiere" — så fladen heller ikke tilbyder knappen.
+// evalKilde svarer null når oplysningen mangler (ADR-0002); der skal stå hvad der mangler,
+// ikke et tal brugeren kan komme til at taste ind på skat.dk.
 function visVaerdi(raw, enhed) {
+  if (raw === null) return { vis: 'Periode mangler', kopi: null }
   if (enhed === 'kr') return { vis: tal(raw) + ' kr.', kopi: String(raw) }
   if (enhed === '%') return { vis: tal(raw) + ' %', kopi: String(raw) }
   if (enhed === 'dage') return { vis: tal(raw) + ' dage', kopi: String(raw) }
@@ -93,6 +97,19 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
           </p>
         </div>
         {year && <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>{dt.note}</p>}
+        {/* Uden udlejningsperiode er der intet dagstal at indberette — og appen gætter
+            ikke ét, heller ikke selvom 360 ville se rigtigt ud (ADR-0002). */}
+        {year && manglerPeriode(saet) && (
+          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+            <p style={{ margin: 0 }}><span className="badge warn">Periode mangler</span></p>
+            <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+              Udlejningsperioden mangler i dette grundlag, så dagsfelterne (748 / 207) kan ikke
+              beregnes og indberettes ikke. Beløb der er tastet “pr. måned” fordeles også efter
+              perioden og regnes uden den som et helt år — kontrollér resultatfelterne, før I
+              indberetter dem. Udfyld fra- og til-dato under “Årets tal”.
+            </p>
+          </div>
+        )}
       </div>
 
       {!year && <div className="card"><p className="empty-state">Opret et år under “Årets tal” først.</p></div>}
@@ -140,8 +157,8 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
                         {f.label}
                         {f.note && <div className="muted" style={{ fontSize: 12 }}>{f.note}</div>}
                       </td>
-                      <td className="num">{vis}</td>
-                      <td>{f.enhed === 'kr' || f.enhed === 'dage' || f.enhed === '%' ? <KopiKnap tekst={kopi} /> : null}</td>
+                      <td className="num">{kopi === null ? <span className="badge warn">{vis}</span> : vis}</td>
+                      <td>{kopi !== null && (f.enhed === 'kr' || f.enhed === 'dage' || f.enhed === '%') ? <KopiKnap tekst={kopi} /> : null}</td>
                     </tr>
                   )
                 })}

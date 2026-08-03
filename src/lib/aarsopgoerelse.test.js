@@ -113,6 +113,46 @@ test('periodeflaget kan bæres — en periode uden datoer er markeret som mangle
   assert.equal(kald().periode.mangler, false)
 })
 
+// ADR-0002: dagstallene holder op med at gætte. Talsættet herunder bærer stadig det
+// gamle fra_maaned/til_maaned (1–12), som tidligere gav 360 — netop SKATs egen værdi
+// for et helt udlejningsår.
+test('et talsæt uden periode giver 0 dage, ikke 360', () => {
+  for (const uden of [
+    raatSaet({ fra_dato: '', til_dato: '' }),          // ingen af delene
+    raatSaet({ til_dato: '' }),                        // kun fra-dato
+    raatSaet({ fra_dato: '' }),                        // kun til-dato
+  ]) {
+    const o = kald({ years: [{ id: 8, aar: 2025, budget: uden, faktisk: uden }] })
+    assert.equal(o.periode.mangler, true)
+    assert.equal(o.dagstal.udlejningsdage, 0)
+    assert.equal(o.dagstal.indberetningsdage, 0)
+  }
+})
+
+test('opstillingens hoved skriver "periode mangler" frem for et dagstal', () => {
+  const uden = raatSaet({ fra_dato: '', til_dato: '' })
+  const o = kald({ years: [{ id: 8, aar: 2025, budget: uden, faktisk: uden }] })
+  assert.equal(
+    o.opstilling.hoved.linjer[2],
+    'Grundlag: faktiske tal · Udlejet til nærtstående: ja · udlejningsperiode mangler',
+  )
+  assert.doesNotMatch(o.opstilling.hoved.linjer[2], /\d+ udlejningsdage/)
+})
+
+test('et hul-år uden lejekontrakt får ingen afledt periode og ingen 360', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30', maanedlig_leje: 4500 },
+    { id: 2, startdato: '2029-01-01', maanedlig_leje: 6000 },
+  ]
+  const uden = raatSaet({ fra_dato: '', til_dato: '' })
+  const o = kald({ leases, years: [{ id: 20, aar: 2028, budget: uden, faktisk: uden }] }, 2028)
+  assert.equal(o.aarsgrundlag.lease, null)
+  assert.equal(o.aarsgrundlag.fra_dato, '')
+  assert.equal(o.aarsgrundlag.dage360, 0)
+  assert.equal(o.aarsgrundlag.mangler, true)
+  assert.equal(o.dagstal.indberetningsdage, 0)
+})
+
 test('perioden og afvigelsen fra lejekontrakten rapporteres, men rettes ikke', () => {
   const o = kald()
   assert.deepEqual(o.periode.fra_dato, '2025-08-06')             // talsættets egen, ikke kontraktens

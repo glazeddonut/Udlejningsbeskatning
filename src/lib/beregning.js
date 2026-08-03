@@ -59,10 +59,16 @@ export function leaseForAar(leases, aar) {
 
 // Udlejningsperioden for et år, klippet til året, udledt af lejekontrakten.
 // Returnerer [fra_dato, til_dato] som ISO-strenge.
+//
+// Uden lejekontrakt er der ingen periode at udlede — ['', ''] (ADR-0002). Her blev
+// hele kalenderåret tidligere tildelt, så et hul-år fik 360 indberetningsdage uden at
+// nogen havde lejet ud. En åben SLUTdato er noget andet: kontrakten løber videre, og
+// perioden klippes så til årets udgang.
 export function periodeForAar(lease, aar) {
+  if (!lease) return ['', '']
   const ys = `${aar}-01-01`, ye = `${aar}-12-31`
-  const ls = lease?.startdato || ys
-  const le = lease?.slutdato || ye
+  const ls = lease.startdato || ys
+  const le = lease.slutdato || ye
   return [ls > ys ? ls : ys, le < ye ? le : ye]   // ISO-datoer sorterer leksikalsk
 }
 
@@ -80,6 +86,7 @@ export function aarsgrundlag(leases, aar) {
     varme: Number(lease?.forbrug_aconto?.varme) || 0,
     dage: udlejningsdage(periode),
     dage360: udlejningsdage360(periode),
+    mangler: manglerPeriode(periode),   // hul-år: ingen kontrakt → ingen periode
   }
 }
 
@@ -112,13 +119,27 @@ export function antalMaaneder(saet) {
   return Math.max(0, til - fra + 1)
 }
 
+// Mangler talsættet en hel udlejningsperiode? Kun to gyldige datoer tæller som oplyst
+// — én dato er lige så uoplyst som ingen. Flaget er det svar dagsoptællingerne giver i
+// stedet for et tal, så en visende flade kan skrive "periode mangler" (ADR-0002).
+export function manglerPeriode(saet) {
+  return !parseDato(saet?.fra_dato) || !parseDato(saet?.til_dato)
+}
+
 // Antal udlejningsdage efter SKATs 30/360-konvention: en kalendermåned regnes som
 // 30 dage og indkomståret som 360 dage. Det er den konvention fodnoten på felt 748
 // (forskud) og rubrik 207 (årsopgørelse) foreskriver — se CLAUDE.md.
 // Bruges KUN til indberetning; pro rata af beløb er dagsproportional (prorataMaaneder).
+//
+// Uden en udlejningsperiode er svaret 0, ikke et skøn (ADR-0002). Her stod tidligere
+// `antalMaaneder(saet) * 30`, som uden datoer gav 360 — præcis SKATs egen værdi for et
+// helt udlejningsår. Gættet producerede derfor ikke et åbenlyst forkert tal, men et der
+// så fuldstændig legitimt ud, netop når oplysningen manglede, og som kunne indberettes
+// ubemærket i felt 748 / rubrik 207. Kalderen spørger manglerPeriode og skriver
+// "periode mangler" frem for et tal.
 export function udlejningsdage360(saet) {
-  const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
-  if (!f || !t) return antalMaaneder(saet) * 30   // manglende datoer: allerede 30-dages-måneder
+  if (manglerPeriode(saet)) return 0
+  const f = parseDato(saet.fra_dato), t = parseDato(saet.til_dato)
   const d1 = Math.min(f.getDate(), 30), d2 = Math.min(t.getDate(), 30)
   const dage = (t.getFullYear() - f.getFullYear()) * 360
     + (t.getMonth() - f.getMonth()) * 30 + (d2 - d1) + 1
@@ -126,16 +147,22 @@ export function udlejningsdage360(saet) {
 }
 
 // Antal udlejningsdage (faktiske kalenderdage, inklusiv start og slut).
-// Falder tilbage til 30-dages-måneder hvis datoer mangler (fuldt år = 360).
+// Uden periode: 0 — se udlejningsdage360 for hvorfor der ikke gættes.
 export function udlejningsdage(saet) {
-  const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
-  if (f && t) return Math.max(0, Math.round((t - f) / 86400000) + 1)
-  return antalMaaneder(saet) * 30
+  if (manglerPeriode(saet)) return 0
+  const f = parseDato(saet.fra_dato), t = parseDato(saet.til_dato)
+  return Math.max(0, Math.round((t - f) / 86400000) + 1)
 }
 
 // Forholdsmæssige måneder til pro rata (dansk lejeret): summen af aktive dage / dage i
 // hver berørt måned. Delmåneder tæller forholdsmæssigt (fx 5.–31. aug = 27/31). Datobaseret;
 // falder tilbage til hele måneder (antalMaaneder) hvis datoer mangler.
+//
+// Bemærk den bevidste asymmetri til dagstallene, som svarer 0 ved manglende periode
+// (ADR-0002): et dagstal ER den værdi der indberettes og kan derfor erstattes af teksten
+// "periode mangler", mens pro rata er en faktor på et beløb der skal ende som et tal i en
+// sum. Svarede den 0, forsvandt den indtastede husleje tavst ud af udlejningsresultatet.
+// Manglende periode markeres derfor med flaget, ikke ved at nulstille beløbene.
 export function prorataMaaneder(saet) {
   const f = parseDato(saet?.fra_dato), t = parseDato(saet?.til_dato)
   if (!f || !t || t < f) return antalMaaneder(saet)

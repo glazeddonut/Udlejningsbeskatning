@@ -36,7 +36,7 @@ import { kr, kr2, oere } from './format.js'
 import {
   gruppeOpgoerelse, resultatFoerRenter, sumRenter,
   personOpgoerelse, resolveFordeling,
-  udlejningsdage, udlejningsdage360, prorataMaaneder,
+  udlejningsdage, udlejningsdage360, prorataMaaneder, manglerPeriode,
   aarsgrundlag, periodeAfvigelse,
 } from './beregning.js'
 
@@ -180,12 +180,14 @@ function byggAfstemning({ sum, aaretsBilag, indt, udg }) {
   return { titel, forklaring: AFSTEMNINGSFORKLARING, kolonner: AFSTEMNINGSKOLONNER, raekker, tom_tekst: '' }
 }
 
-function byggOpstilling({ aar, grundlag, saet, dagstal, sum, personer, aaretsBilag, property, persons, indt, udg }) {
+function byggOpstilling({ aar, grundlag, saet, dagstal, periode, sum, personer, aaretsBilag, property, persons, indt, udg }) {
   const ejendom = `${property?.navn || 'Ejendom'}${property?.adresse ? ', ' + property.adresse : ''}`
   const ejere = 'Ejere: ' + (persons || []).map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' · ')
+  // Uden udlejningsperiode skriver hovedet flaget frem for et tal (ADR-0002). "0
+  // udlejningsdage" ville være et lige så tavst svar som det 360 vi lige har fjernet.
   const meta = `Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'}`
     + ` · Udlejet til nærtstående: ${saet.naertstaaende ? 'ja' : 'nej'}`
-    + ` · ${dagstal.udlejningsdage} udlejningsdage`
+    + (periode.mangler ? ' · udlejningsperiode mangler' : ` · ${dagstal.udlejningsdage} udlejningsdage`)
 
   const sektioner = [
     {
@@ -275,10 +277,12 @@ export function aarsopgoerelse({ aar, grundlag = 'faktisk', years, leases, perso
     indberetningsdage: udlejningsdage360(saet),
     prorataMaaneder: prorataMaaneder(saet),
   }
+  // Flaget stiller samme spørgsmål som dagstallene gør indeni, og stiller det ét sted:
+  // svarer optællingerne 0 fordi perioden mangler, SKAL flaget være sat (ADR-0002).
   const periode = {
     fra_dato: saet.fra_dato,
     til_dato: saet.til_dato,
-    mangler: !saet.fra_dato || !saet.til_dato,
+    mangler: manglerPeriode(saet),
   }
 
   const grundlagFraKontrakt = aarsgrundlag(leases, year.aar)
@@ -315,6 +319,6 @@ export function aarsopgoerelse({ aar, grundlag = 'faktisk', years, leases, perso
     personer,
     sum,
     bilag: aaretsBilag,
-    opstilling: byggOpstilling({ aar: year.aar, grundlag, saet, dagstal, sum, personer, aaretsBilag, property, persons, indt, udg }),
+    opstilling: byggOpstilling({ aar: year.aar, grundlag, saet, dagstal, periode, sum, personer, aaretsBilag, property, persons, indt, udg }),
   }
 }

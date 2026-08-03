@@ -5,7 +5,7 @@ import {
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
-  aarsgrundlag, periodeAfvigelse, gruppeOpgoerelse,
+  aarsgrundlag, periodeAfvigelse, gruppeOpgoerelse, manglerPeriode,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -134,9 +134,28 @@ test('antalMaaneder: fra/til giver antal, default = 12', () => {
   assert.equal(antalMaaneder({ fra_maaned: 6, til_maaned: 6 }), 1)
 })
 
-test('udlejningsdage: 30-dages-måneder (5 mdr = 150, fuldt år = 360)', () => {
-  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 150)
-  assert.equal(udlejningsdage({}), 360)
+// Skrevet om (ADR-0002): testen cementerede tidligere udlejningsdage({}) === 360.
+// 360 er præcis SKATs egen værdi for et helt udlejningsår, så gættet så legitimt ud
+// netop når oplysningen manglede. Uden en udlejningsperiode er svaret nu 0 + et flag.
+test('udlejningsdage uden periode: 0 dage og et flag — aldrig et gæt', () => {
+  assert.equal(udlejningsdage({}), 0)
+  assert.equal(manglerPeriode({}), true)
+  // Heller ikke det gamle måneds-format må genoplive gættet
+  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 0)
+  assert.equal(manglerPeriode({ fra_maaned: 8, til_maaned: 12 }), true)
+})
+
+test('manglerPeriode: kun en hel periode med to gyldige datoer tæller som oplyst', () => {
+  assert.equal(manglerPeriode({ fra_dato: '2025-08-06', til_dato: '2025-12-31' }), false)
+  assert.equal(manglerPeriode({ fra_dato: '2025-08-06', til_dato: '' }), true)   // mangler til-dato
+  assert.equal(manglerPeriode({ fra_dato: '', til_dato: '2025-12-31' }), true)   // mangler fra-dato
+  assert.equal(manglerPeriode(null), true)
+  assert.equal(manglerPeriode({ fra_dato: 'ikke en dato', til_dato: '2025-12-31' }), true)
+})
+
+test('udlejningsdage: en halv periode er også en manglende periode', () => {
+  assert.equal(udlejningsdage({ fra_dato: '2025-08-06' }), 0)                    // ingen til-dato
+  assert.equal(udlejningsdage({ til_dato: '2025-12-31' }), 0)                    // ingen fra-dato
 })
 
 test('effektivBeloeb: pro rata ganger månedsbeløb med antal måneder', () => {
@@ -243,6 +262,33 @@ test('periodeForAar: klipper lejeperioden til året', () => {
   assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
 })
 
+// Samme fælde som de manglende datoer, ad en anden vej (ADR-0002): uden kontrakt fik
+// året tildelt hele kalenderåret og dermed 360 indberetningsdage — uden at nogen havde
+// lejet noget ud. Ingen lejekontrakt betyder ingen periode.
+test('periodeForAar uden lejekontrakt: ingen periode, ikke hele kalenderåret', () => {
+  assert.deepEqual(periodeForAar(null, 2028), ['', ''])
+  assert.deepEqual(periodeForAar(undefined, 2028), ['', ''])
+})
+
+test('et hul-år får hverken periode eller dagstal', () => {
+  // Kontrakterne dækker 2025–2027 og igen fra 2029. 2028 er et hul-år.
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30', maanedlig_leje: 4500 },
+    { id: 2, startdato: '2029-01-01', maanedlig_leje: 6000 },
+  ]
+  assert.equal(leaseForAar(leases, 2028), null)
+  const g = aarsgrundlag(leases, 2028)
+  assert.equal(g.fra_dato, '')
+  assert.equal(g.til_dato, '')
+  assert.equal(g.mangler, true)
+  assert.equal(g.dage, 0)
+  assert.equal(g.dage360, 0)          // ikke 360 — der er ingen lejekontrakt
+  assert.equal(g.maanedlig_leje, 0)
+  // Kontraktårene er uberørte
+  assert.equal(aarsgrundlag(leases, 2026).dage360, 360)
+  assert.equal(aarsgrundlag(leases, 2026).mangler, false)
+})
+
 test('aarsgrundlag: udleder periode og leje fra den kontrakt der gælder i året', () => {
   const leases = [{ id: 1, startdato: '2025-08-05', maanedlig_leje: 6000, forbrug_aconto: { vand: 200, varme: 300 } }]
   const g = aarsgrundlag(leases, 2025)
@@ -251,10 +297,13 @@ test('aarsgrundlag: udleder periode og leje fra den kontrakt der gælder i året
   assert.equal(g.maanedlig_leje, 6000)
   assert.equal(g.dage, 149)          // faktiske kalenderdage
   assert.equal(g.dage360, 146)       // skemaets 30/360
-  // Uden kontrakt: hele året, ingen leje
+  assert.equal(g.mangler, false)
+  // Uden kontrakt: ingen periode og ingen leje (ADR-0002 — tidligere: hele året)
   const tom = aarsgrundlag([], 2025)
   assert.equal(tom.lease, null)
-  assert.equal(tom.fra_dato, '2025-01-01')
+  assert.equal(tom.fra_dato, '')
+  assert.equal(tom.til_dato, '')
+  assert.equal(tom.mangler, true)
   assert.equal(tom.maanedlig_leje, 0)
 })
 
@@ -286,8 +335,19 @@ test('udlejningsdage360: SKATs 30/360-konvention (md = 30 dage, år = 360)', () 
   assert.equal(udlejningsdage({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 149)
   // Skudår ændrer ikke 30/360-tallet
   assert.equal(udlejningsdage360({ fra_dato: '2024-01-01', til_dato: '2024-12-31' }), 360)
-  // Manglende datoer falder tilbage til måneder × 30 (allerede 30/360)
-  assert.equal(udlejningsdage360({}), 360)
+})
+
+// Skrevet om (ADR-0002): her stod tidligere udlejningsdage360({}) === 360 med
+// begrundelsen "falder tilbage til måneder × 30". Det er netop det tal SKAT forventer
+// for et helt udlejningsår, så det manglende input kunne indberettes ubemærket.
+test('udlejningsdage360 uden periode: 0 dage — intet at indberette i felt 748 / rubrik 207', () => {
+  assert.equal(udlejningsdage360({}), 0)
+  assert.equal(udlejningsdage360({ fra_maaned: 1, til_maaned: 12 }), 0)
+  assert.equal(udlejningsdage360({ fra_dato: '2025-08-06' }), 0)                 // ingen til-dato
+  assert.equal(udlejningsdage360({ til_dato: '2025-12-31' }), 0)                 // ingen fra-dato
+  // ... men et helt oplyst udlejningsår giver stadig præcis 360, ikke 365
+  assert.equal(udlejningsdage360({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 360)
+  assert.equal(udlejningsdage({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 365)
 })
 
 test('leaseForAar: vælger den kontrakt der er aktiv i året', () => {
@@ -312,6 +372,23 @@ test('prorataMaaneder: delmåned tæller forholdsmæssigt (5.–31. aug + fulde 
   assert.ok(Math.abs(pm - 4.871) < 0.001)
   // fuldt år = præcis 12
   assert.equal(prorataMaaneder({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 12)
+})
+
+// Bevidst asymmetri (ADR-0002): dagstallene svarer 0 ved manglende periode, pro rata
+// gør IKKE. De to ting er ikke ens. Et dagstal ER den værdi der indberettes, og kan
+// derfor erstattes af teksten "periode mangler" — tallet vises aldrig. Pro rata-måneder
+// er en faktor på et beløb brugeren selv har tastet, og det beløb skal ende som et tal
+// i en sum; ingen tekst kan træde i stedet. Ville pro rata svare 0, forsvandt den
+// indtastede husleje tavst ud af udlejningsresultatet — netop den slags plausibelt
+// udseende tal ADR-0002 handler om, blot i beløb i stedet for i dage, og et tal der
+// indberettes i rubrik 111/112. Adfærden er derfor uændret her og markeres i stedet
+// med flaget på de visende flader.
+test('prorataMaaneder uden periode: uændret adfærd — flaget bærer oplysningen, ikke tallet', () => {
+  assert.equal(prorataMaaneder({}), 12)
+  assert.equal(prorataMaaneder({ fra_maaned: 8, til_maaned: 12 }), 5)
+  // Men dagstallene for samme talsæt nægter at gætte
+  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 0)
+  assert.equal(udlejningsdage360({ fra_maaned: 8, til_maaned: 12 }), 0)
 })
 
 test('effektivBeloeb (datobaseret): leje forholdsmæssigt, ikke fulde 5 mdr', () => {

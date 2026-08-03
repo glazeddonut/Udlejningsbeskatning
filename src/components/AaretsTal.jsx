@@ -6,7 +6,7 @@ import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling, gruppeOpgoerelse,
   udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
-  prorataMaaneder, aarsgrundlag, periodeAfvigelse,
+  prorataMaaneder, aarsgrundlag, periodeAfvigelse, manglerPeriode,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
@@ -308,18 +308,34 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
           <TextField label="Til dato" type="date" value={saet.til_dato || ''} onChange={v => setField(null, 'til_dato', v)} />
           <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
         </div>
-        <p className="muted" style={{ marginTop: 10 }}>
-          <strong>{udlejningsdage(saet)} udlejningsdage</strong> (faktiske kalenderdage) · {pmdr.toLocaleString('da-DK', { maximumFractionDigits: 2 })} måneder til pro rata-fordeling
-        </p>
-        {/* SKAT regner disse dagsfelter i 30/360 — vis begge tal, så forskellen er synlig ved indtastning. */}
-        <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
-          Til skat.dk (felt 748 / rubrik 207): <strong>{udlejningsdage360(saet)} dage</strong> — skemaet regner
-          en kalendermåned som 30 dage og indkomståret som 360 dage.
-        </p>
+        {/* Uden periode vises flaget i stedet for et dagstal (ADR-0002). Et "0 dage"
+            eller det tidligere 360 ville begge være svar appen selv havde fundet på. */}
+        {manglerPeriode(saet) ? (
+          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+            <p style={{ margin: 0 }}><span className="badge warn">Periode mangler</span></p>
+            <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+              Udfyld både fra- og til-dato. Uden en udlejningsperiode kan hverken udlejningsdage
+              eller dagstallet til skat.dk (felt 748 / rubrik 207) beregnes — og appen gætter dem ikke.
+              Beløb markeret “pr. måned” fordeles også efter perioden: uden den regnes de som et
+              helt år, så både beløbene og resultatet herunder skal kontrolleres.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="muted" style={{ marginTop: 10 }}>
+              <strong>{udlejningsdage(saet)} udlejningsdage</strong> (faktiske kalenderdage) · {pmdr.toLocaleString('da-DK', { maximumFractionDigits: 2 })} måneder til pro rata-fordeling
+            </p>
+            {/* SKAT regner disse dagsfelter i 30/360 — vis begge tal, så forskellen er synlig ved indtastning. */}
+            <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+              Til skat.dk (felt 748 / rubrik 207): <strong>{udlejningsdage360(saet)} dage</strong> — skemaet regner
+              en kalendermåned som 30 dage og indkomståret som 360 dage.
+            </p>
+          </>
+        )}
 
         {/* Perioden er gemt ved oprettelsen; er lejekontrakten rettet siden, vises forskellen her. */}
         {afvigelse && (
-          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--warn-bg, #fff8e6)' }}>
+          <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
             <p style={{ margin: 0 }}>
               <span className="badge warn">Afviger fra lejekontrakten</span>
             </p>
@@ -331,8 +347,9 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
                 <tr>
                   <td>Gemt her</td>
                   <td>{afvigelse.gemt.fra_dato || '—'} → {afvigelse.gemt.til_dato || '—'}</td>
-                  <td className="num">{afvigelse.gemt.dage}</td>
-                  <td className="num"><strong>{afvigelse.gemt.dage360}</strong></td>
+                  {/* Mangler den gemte periode, er 0 ikke et dagstal — det er fraværet af et. */}
+                  <td className="num">{manglerPeriode(saet) ? '—' : afvigelse.gemt.dage}</td>
+                  <td className="num"><strong>{manglerPeriode(saet) ? '—' : afvigelse.gemt.dage360}</strong></td>
                 </tr>
                 <tr>
                   <td>Lejekontrakten</td>
