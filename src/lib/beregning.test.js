@@ -5,7 +5,7 @@ import {
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
-  aarsgrundlag, periodeAfvigelse,
+  aarsgrundlag, periodeAfvigelse, gruppeOpgoerelse,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -156,6 +156,72 @@ test('sumIndtaegter respekterer pro rata pr. felt', () => {
     prorata: { 'indtaegter.leje': true },   // kun leje er månedlig
   }
   assert.equal(sumIndtaegter(saet), 6000 * 5 + 1000)  // 31.000
+})
+
+// ── Gruppesummering over kontoplanen + hjemløse poster (ADR-0001) ─────────────
+// Invarianten: rækkerne i en gruppe summer ALTID til gruppens total. En værdi under
+// en nøgle kontoplanen ikke kender er hjemløs — den tælles med og rapporteres, så en
+// visende flade kan give den sin egen række.
+
+test('gruppeOpgoerelse: kun kendte poster — kontoplanens rækkefølge, ingen hjemløse', () => {
+  const saet = { indtaegter: { leje: 72000, vand: 3600 } }
+  const g = gruppeOpgoerelse(saet, 'indtaegter')
+  assert.deepEqual(g.poster.map(p => p.noegle), ['leje', 'vand', 'varme', 'andet'])
+  assert.deepEqual(g.poster.map(p => p.beloeb), [72000, 3600, 0, 0])   // manglende nøgle = 0
+  assert.deepEqual(g.hjemloese, [])
+  assert.equal(g.sum, 75600)
+  assert.equal(g.sum, g.poster.reduce((s, p) => s + p.beloeb, 0))      // rækkerne summer til totalen
+})
+
+test('gruppeOpgoerelse: kendte plus hjemløse — den hjemløse tælles med i totalen', () => {
+  const saet = { udgifter: { grundskyld: 7488, ejerforening: 1200, gammel_nøgle: 300 } }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.poster.every(p => p.noegle !== 'ejerforening'), true) // ikke i kontoplanen
+  assert.deepEqual(g.hjemloese.map(h => [h.noegle, h.beloeb]), [['ejerforening', 1200], ['gammel_nøgle', 300]])
+  assert.deepEqual(g.hjemloese.map(h => h.id), ['udgifter.ejerforening', 'udgifter.gammel_nøgle'])
+  assert.equal(g.sum, 7488 + 1200 + 300)
+  const raekkesum = [...g.poster, ...g.hjemloese].reduce((s, p) => s + p.beloeb, 0)
+  assert.equal(g.sum, raekkesum)
+  assert.equal(sumFradragsUdgifter(saet), 8988)                        // samme total som gruppen
+})
+
+test('gruppeOpgoerelse: kun hjemløse — totalen er stadig summen af alt gemt data', () => {
+  const saet = { udgifter: { ejerforening: 1200 } }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.poster.every(p => p.beloeb === 0), true)
+  assert.equal(g.sum, 1200)
+  assert.equal(sumFradragsUdgifter(saet), 1200)
+  assert.equal(resultatFoerRenter(saet), -1200)                        // en hjemløs udgift er stadig et fradrag
+})
+
+test('gruppeOpgoerelse: tomt talsæt — alt nul, ingen hjemløse', () => {
+  for (const saet of [tomtSaet(), {}, null]) {
+    const g = gruppeOpgoerelse(saet, 'udgifter')
+    assert.deepEqual(g.hjemloese, [])
+    assert.equal(g.sum, 0)
+  }
+  assert.equal(sumIndtaegter(tomtSaet()), 0)
+  assert.equal(sumFradragsUdgifter(tomtSaet()), 0)
+})
+
+test('en hjemløs post regnes pro rata på præcis samme vilkår som en kendt post', () => {
+  const saet = {
+    fra_dato: '2025-08-05', til_dato: '2025-12-31',
+    udgifter: { ejerforening: 1000 },
+    prorata: { 'udgifter.ejerforening': true },
+  }
+  const forventet = Math.round(1000 * prorataMaaneder(saet))
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.hjemloese[0].beloeb, forventet)
+  assert.equal(g.hjemloese[0].prorata, true)
+  assert.equal(g.sum, forventet)
+})
+
+test('en hjemløs indtægt rapporteres på samme måde som en hjemløs udgift', () => {
+  const saet = { indtaegter: { depositum: 18000 }, udgifter: { ejerforening: 1200 } }
+  assert.deepEqual(gruppeOpgoerelse(saet, 'indtaegter').hjemloese.map(h => h.id), ['indtaegter.depositum'])
+  assert.deepEqual(gruppeOpgoerelse(saet, 'udgifter').hjemloese.map(h => h.id), ['udgifter.ejerforening'])
+  assert.equal(resultatFoerRenter(saet), 18000 - 1200)
 })
 
 test('udlejningsdage (datobaseret): faktiske kalenderdage inkl. start og slut', () => {

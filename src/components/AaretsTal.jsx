@@ -4,8 +4,8 @@ import { parseNum, kr, daNum } from '../lib/format.js'
 import { NumberField, TextField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
-  sumRenter, personOpgoerelse, resolveFordeling,
-  antalMaaneder, udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
+  sumRenter, personOpgoerelse, resolveFordeling, gruppeOpgoerelse,
+  udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
   prorataMaaneder, aarsgrundlag, periodeAfvigelse,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
@@ -47,24 +47,6 @@ function prefillSaet({ leases, property, loans, aar }) {
   if (property) s.udgifter.grundskyld = Number(property.grundskyld_aarlig) || 0  // årsbeløb
   return s
 }
-
-const INDTAEGT_FELTER = [
-  ['leje', 'Husleje', 'ekskl. forbrug'],
-  ['vand', 'Vand (opkrævet)', ''],
-  ['varme', 'Varme (opkrævet)', ''],
-  ['andet', 'Anden indtægt', ''],
-]
-const UDGIFT_FELTER = [
-  ['grundskyld', 'Grundskyld (ejendomsskat)', ''],
-  ['faellesudgifter', 'Fællesudgifter (drift)', 'ikke henlæggelser til forbedring'],
-  ['forsikring', 'Forsikring', ''],
-  ['vedligeholdelse', 'Vedligeholdelse', 'ikke forbedring'],
-  ['vand', 'Vand (afholdt)', ''],
-  ['varme', 'Varme (afholdt)', ''],
-  ['administration', 'Administration', ''],
-  ['renovation', 'Renovation', ''],
-  ['andet', 'Andet', ''],
-]
 
 export default function AaretsTal({ years, persons, property, loans, leases, settings, reload }) {
   const sorterede = [...years].sort((a, b) => b.aar - a.aar)
@@ -228,9 +210,12 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
   )
 }
 
-function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata }) {
-  const pro = erProrata(saet, gruppe, felt)
-  const raw = saet[gruppe][felt]
+// Ét beløbsfelt for én post i kontoplanen. Posten leverer label og hint, så
+// indtastningen bruger samme navne som regnskabet.
+function BeloebFelt({ post, saet, setField, setProrata }) {
+  const { gruppe, noegle, label, hint } = post
+  const pro = erProrata(saet, gruppe, noegle)
+  const raw = saet[gruppe]?.[noegle] ?? 0
   const [text, setText] = useState(() => (raw ? daNum(raw) : ''))
   const [focus, setFocus] = useState(false)
   useEffect(() => { if (!focus) setText(raw ? daNum(raw) : '') }, [raw, focus])
@@ -239,7 +224,7 @@ function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata
       <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span>{label} {hint && <span className="hint">· {hint}</span>}</span>
         <span className="hint" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer', fontWeight: 400 }}>
-          <input type="checkbox" checked={pro} onChange={e => setProrata(gruppe, felt, e.target.checked)} style={{ width: 'auto', margin: 0 }} />
+          <input type="checkbox" checked={pro} onChange={e => setProrata(gruppe, noegle, e.target.checked)} style={{ width: 'auto', margin: 0 }} />
           pr. måned
         </span>
       </label>
@@ -247,14 +232,62 @@ function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata
         <input
           type="text" inputMode="decimal"
           value={text}
-          onChange={e => { setText(e.target.value); setField(gruppe, felt, e.target.value) }}
+          onChange={e => { setText(e.target.value); setField(gruppe, noegle, e.target.value) }}
           onFocus={() => setFocus(true)}
           onBlur={() => setFocus(false)}
           style={{ paddingRight: 54 }}
         />
         <span className="suffix">{pro ? 'kr./md' : 'kr.'}</span>
       </div>
-      {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, felt))} for perioden</span>}
+      {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, noegle))} for perioden</span>}
+    </div>
+  )
+}
+
+// Hjemløs post: en værdi gemt under en nøgle kontoplanen ikke kender. Den tælles med
+// i gruppens total (ADR-0001), og skal derfor også kunne SES — ellers stemmer de viste
+// rækker ikke med totalen. Vises med nøgle og beløb, men kan ikke redigeres her:
+// en værdi uden en post i kontoplanen har hverken navn eller plads i regnskabet.
+// Baggrunden er --surface-2 (findes i begge temaer), ikke en fast lys farve.
+function HjemloesePoster({ poster }) {
+  return (
+    <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+      <p style={{ margin: 0 }}><span className="badge warn">Hjemløse poster</span></p>
+      <table className="data" style={{ marginTop: 8 }}>
+        <thead>
+          <tr><th>Nøgle</th><th className="num">Beløb</th></tr>
+        </thead>
+        <tbody>
+          {poster.map(p => (
+            <tr key={p.id}>
+              <td><code>{p.id}</code>{p.prorata && <span className="hint"> · pr. måned</span>}</td>
+              <td className="num">{kr(p.beloeb)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+        Gemt under en nøgle kontoplanen ikke kender. Beløbet tælles med i totalen herunder,
+        så rækkerne stemmer — men posten kan ikke rettes her.
+      </p>
+    </div>
+  )
+}
+
+// Ét kort pr. gruppe i kontoplanen: felterne bygges af kontoplanen, ikke af en liste
+// her i komponenten, og totalen er gruppens egen sum — inklusive hjemløse poster.
+function GruppeKort({ titel, gruppe, saet, setField, setProrata }) {
+  const g = gruppeOpgoerelse(saet, gruppe)
+  return (
+    <div className="card">
+      <h2>{titel}</h2>
+      <div className="grid">
+        {g.poster.map(p => (
+          <BeloebFelt key={p.id} post={p} saet={saet} setField={setField} setProrata={setProrata} />
+        ))}
+      </div>
+      {g.hjemloese.length > 0 && <HjemloesePoster poster={g.hjemloese} />}
+      <p className="muted" style={{ marginTop: 10 }}>I alt: <strong>{kr(g.sum)}</strong></p>
     </div>
   )
 }
@@ -262,7 +295,6 @@ function BeloebFelt({ gruppe, felt, label, hint, saet, mdr, setField, setProrata
 function Redigering({ saet, loans, persons, property, fordeling, grundlag, setField, setRente, setProrata, setPeriode }) {
   const resultat = resultatFoerRenter(saet)
   const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
-  const mdr = antalMaaneder(saet)
   const pmdr = prorataMaaneder(saet)
   const afvigelse = periodeAfvigelse(saet, grundlag)
 
@@ -321,25 +353,9 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
         )}
       </div>
 
-      <div className="card">
-        <h2>Indtægter</h2>
-        <div className="grid">
-          {INDTAEGT_FELTER.map(([k, label, hint]) => (
-            <BeloebFelt key={k} gruppe="indtaegter" felt={k} label={label} hint={hint} saet={saet} mdr={mdr} setField={setField} setProrata={setProrata} />
-          ))}
-        </div>
-        <p className="muted" style={{ marginTop: 10 }}>I alt: <strong>{kr(sumIndtaegter(saet))}</strong></p>
-      </div>
+      <GruppeKort titel="Indtægter" gruppe="indtaegter" saet={saet} setField={setField} setProrata={setProrata} />
 
-      <div className="card">
-        <h2>Fradragsberettigede udgifter</h2>
-        <div className="grid">
-          {UDGIFT_FELTER.map(([k, label, hint]) => (
-            <BeloebFelt key={k} gruppe="udgifter" felt={k} label={label} hint={hint} saet={saet} mdr={mdr} setField={setField} setProrata={setProrata} />
-          ))}
-        </div>
-        <p className="muted" style={{ marginTop: 10 }}>I alt: <strong>{kr(sumFradragsUdgifter(saet))}</strong></p>
-      </div>
+      <GruppeKort titel="Fradragsberettigede udgifter" gruppe="udgifter" saet={saet} setField={setField} setProrata={setProrata} />
 
       <div className="card">
         <h2>Forbedringer</h2>

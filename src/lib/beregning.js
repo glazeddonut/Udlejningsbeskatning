@@ -9,16 +9,20 @@
 //  - Renteudgifter er personlige (negativ kapitalindkomst), IKKE en del af
 //    udlejningsresultatet. Fordeles efter HÆFTELSE på det enkelte lån.
 
-// Tomt talsæt (budget = forskud, faktisk = selvangivelse).
+import { posterIGruppe, erKendtPost } from './kontoplan.js'
+
+// Nulstillede beløb for én af kontoplanens grupper, i kontoplanens rækkefølge.
+const nulPoster = (gruppe) =>
+  Object.fromEntries(posterIGruppe(gruppe).map(p => [p.noegle, 0]))
+
+// Tomt talsæt (budget = forskud, faktisk = selvangivelse). Posterne kommer fra
+// kontoplanen, så et tomt talsæt aldrig kan drive fra den.
 export function tomtSaet() {
   return {
     fra_dato: '',             // udlejningsperiode (ISO YYYY-MM-DD); udledes fra lejekontrakt
     til_dato: '',
-    indtaegter: { leje: 0, vand: 0, varme: 0, andet: 0 },
-    udgifter: {
-      grundskyld: 0, faellesudgifter: 0, forsikring: 0, vedligeholdelse: 0,
-      vand: 0, varme: 0, administration: 0, renovation: 0, andet: 0,
-    },
+    indtaegter: nulPoster('indtaegter'),
+    udgifter: nulPoster('udgifter'),
     prorata: {},              // { "indtaegter.leje": true } — true = beløbet er PR. MÅNED
     forbedringer: 0,
     renteudgifter: {},        // { loanId: beløb } (aldrig pro rata — faktiske renter)
@@ -159,20 +163,41 @@ export function effektivBeloeb(saet, gruppe, key) {
   return erProrata(saet, gruppe, key) ? Math.round(raw * prorataMaaneder(saet)) : raw
 }
 
-// Alle effektive årsbeløb i en gruppe ('indtaegter' | 'udgifter').
-export function effektivGruppe(saet, gruppe) {
-  const out = {}
-  for (const k of Object.keys(saet?.[gruppe] || {})) out[k] = effektivBeloeb(saet, gruppe, k)
-  return out
+// Opgørelsen af én gruppe ('indtaegter' | 'udgifter'): kontoplanens poster med deres
+// effektive årsbeløb, PLUS de hjemløse poster — værdier gemt under nøgler kontoplanen
+// ikke kender (fx en legacy-nøgle i JSON-filen).
+//
+// Summeringen løber kontoplanen igennem, ikke talsættets nøgler, så indtastning,
+// regnskab og PDF bygger på samme liste. Hjemløse poster tælles MED i summen og
+// rapporteres eksplicit, så en visende flade kan give dem hver sin række. Invarianten
+// er, at poster + hjemløse altid summer til `sum` — et regnskab hvor delene ikke giver
+// totalen er værdiløst som dokumentation over for SKAT (ADR-0001).
+export function gruppeOpgoerelse(saet, gruppe) {
+  const linje = (noegle, post) => ({
+    id: `${gruppe}.${noegle}`,
+    gruppe,
+    noegle,
+    label: post?.label ?? '',
+    hint: post?.hint ?? '',
+    ejendomspost: post?.ejendomspost ?? false,
+    prorata: erProrata(saet, gruppe, noegle),
+    beloeb: effektivBeloeb(saet, gruppe, noegle),
+  })
+  const poster = posterIGruppe(gruppe).map(p => linje(p.noegle, p))
+  const hjemloese = Object.keys(saet?.[gruppe] || {})
+    .filter(k => !erKendtPost(gruppe, k))
+    .map(k => linje(k, null))
+  const sum = [...poster, ...hjemloese].reduce((s, l) => s + l.beloeb, 0)
+  return { poster, hjemloese, sum }
 }
 
 export function sumIndtaegter(saet) {
-  return sumValues(effektivGruppe(saet, 'indtaegter'))
+  return gruppeOpgoerelse(saet, 'indtaegter').sum
 }
 
 // Fradragsberettigede driftsudgifter. Forbedringer indgår bevidst IKKE.
 export function sumFradragsUdgifter(saet) {
-  return sumValues(effektivGruppe(saet, 'udgifter'))
+  return gruppeOpgoerelse(saet, 'udgifter').sum
 }
 
 // Udlejningsresultat før renter (kan være negativt = underskud).
