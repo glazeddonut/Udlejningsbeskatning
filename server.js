@@ -2,6 +2,7 @@ import express from 'express'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join, extname } from 'path'
+import { bilagForAar, medBilagsnumre } from './src/lib/bilag.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // DB-sti kan overrides med env var (peg på en persistent volume i container)
@@ -27,7 +28,8 @@ const emptyDb = () => ({
   loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse{} }
   leases: [],           // lejekontrakter til datteren (én aktiv pr. år) { id, startdato, slutdato, maanedlig_leje, ... }
   years: [],            // { id, aar, budget:{...}, faktisk:{...} }
-  bilag: [],            // { id, aar, nummer, dato, tekst, beloeb, kategori, type, filnavn, mimetype, filsti }
+  bilag: [],            // { id, aar, dato, tekst, beloeb, kategori, type, filnavn, mimetype, filsti }
+                        // (nummeret gemmes ikke — det udledes af årets liste, se src/lib/bilag.js)
   settings: { ...DEFAULT_SETTINGS },
   field_mappings: {},   // overrides: { "2026-forskud": [ {felt_nr,label,kilde} ] }; tom = brug defaults i frontend
   nextPersonId: 1,
@@ -49,6 +51,10 @@ function loadDb() {
     if (db.property === undefined) db.property = null
     if (!db.field_mappings) db.field_mappings = {}
     if (!db.bilag) db.bilag = []
+    // Ryd gamle, gemte bilagsnumre. De blev overskrevet ved læsning i forvejen og var
+    // derfor allerede forkerte på disken; nummeret udledes nu ét sted (src/lib/bilag.js).
+    // Ikke en migrering der skal til for at serveres korrekt — den fjerner den anden sandhed.
+    for (const b of db.bilag) delete b.nummer
     if (!db.nextPersonId) db.nextPersonId = 1
     if (!db.nextLoanId) db.nextLoanId = 1
     if (!db.nextYearId) db.nextYearId = 1
@@ -249,20 +255,11 @@ app.put('/api/field-mappings', (req, res) => {
 
 // ── Bilag ────────────────────────────────────────────
 // Liste (metadata only; filsti udelades ikke, men filen hentes separat).
-// Bilag nummereres gapfrit 1..n pr. år i oprettelsesrækkefølge (id) — beregnet ved
-// læsning, så et slettet bilag ikke efterlader et "hul" i listen og regnskabs-PDF'en.
-function medLoebenummer(bilagListe) {
-  const tael = {}
-  return [...bilagListe]
-    .sort((a, b) => a.id - b.id)
-    .map(b => ({ ...b, nummer: (tael[b.aar] = (tael[b.aar] || 0) + 1) }))
-}
-
+// Nummereringen ligger i src/lib/bilag.js — se dér for hvorfor nummeret beregnes
+// ved læsning og aldrig gemmes.
 app.get('/api/bilag', (req, res) => {
-  const aar = req.query.aar ? Number(req.query.aar) : null
-  let liste = medLoebenummer(loadDb().bilag)
-  if (aar) liste = liste.filter(b => b.aar === aar)
-  res.json(liste)
+  const db = loadDb()
+  res.json(req.query.aar ? bilagForAar(db.bilag, req.query.aar) : medBilagsnumre(db.bilag))
 })
 
 // Upload: fil sendes som base64 (data-URL eller ren base64) i JSON-body.
@@ -277,16 +274,17 @@ app.post('/api/bilag', (req, res) => {
     filsti = `${id}${ext}`   // filnavn udledes af id — ingen path traversal fra brugerinput
     writeFileSync(join(BILAG_DIR, filsti), Buffer.from(base64, 'base64'))
   }
-  const nummer = Math.max(0, ...db.bilag.filter(b => b.aar === Number(aar)).map(b => b.nummer || 0)) + 1
+  // Intet `nummer` gemmes — det udledes af årets liste ved læsning (src/lib/bilag.js).
   const bilag = {
-    id, aar: Number(aar), nummer,
+    id, aar: Number(aar),
     dato: dato ?? '', tekst: tekst ?? '', beloeb: beloeb ?? 0,
     kategori: kategori ?? '', type: type ?? 'udgift',
     filnavn: filnavn ?? '', mimetype: mimetype ?? '', filsti,
   }
   db.bilag.push(bilag)
   saveDb(db)
-  res.json(bilag)
+  // Svar med bilaget som det serveres — altså med det udledte nummer.
+  res.json(bilagForAar(db.bilag, bilag.aar).find(b => b.id === id))
 })
 
 // Hent selve filen (til preview i UI og til PDF-generering).

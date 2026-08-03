@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api.js'
+import { bilagForAar } from '../lib/bilag.js'
 import { kr2, parseNum } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
@@ -43,7 +44,9 @@ export default function Bilag({ years }) {
   }, [valgtAar])
   useEffect(() => { hent() }, [hent])
 
-  const total = bilag.reduce((s, b) => s + (b.type === 'indtaegt' ? 1 : -1) * (Number(b.beloeb) || 0), 0)
+  // Nummer og rækkefølge kommer fra ét sted (src/lib/bilag.js), ikke fra en sortering her.
+  const aaretsBilag = bilagForAar(bilag, valgtAar)
+  const total = aaretsBilag.reduce((s, b) => s + (b.type === 'indtaegt' ? 1 : -1) * (Number(b.beloeb) || 0), 0)
 
   return (
     <>
@@ -71,14 +74,14 @@ export default function Bilag({ years }) {
       {valgtAar && (
         <div className="card">
           <h2>Bilag {valgtAar}</h2>
-          {bilag.length === 0 && <p className="empty-state">Ingen bilag endnu.</p>}
-          {bilag.length > 0 && (
+          {aaretsBilag.length === 0 && <p className="empty-state">Ingen bilag endnu.</p>}
+          {aaretsBilag.length > 0 && (
             <table className="data">
               <thead>
                 <tr><th>Nr.</th><th>Dato</th><th>Tekst</th><th>Kategori</th><th className="num">Beløb</th><th>Fil</th><th></th></tr>
               </thead>
               <tbody>
-                {[...bilag].sort((a, b) => a.nummer - b.nummer).map(b => (
+                {aaretsBilag.map(b => (
                   <BilagRow key={b.id} b={b} onDone={hent} />
                 ))}
                 <tr className="total">

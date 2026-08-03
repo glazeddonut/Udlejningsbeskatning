@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { bilagForAar } from './bilag.js'
 import { kr, kr2 } from './format.js'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter,
@@ -91,7 +92,9 @@ export async function genererRegnskabPdf({ year, saet, grundlag, persons, proper
   }
 
   // ── Bilagsliste ──
-  const aaretsBilag = [...bilag].sort((a, b) => a.nummer - b.nummer)
+  // Nummer og rækkefølge udledes samme sted som på skærmen — PDF'en må ikke kunne
+  // vise et andet bilagsnummer end Bilag-fanen.
+  const aaretsBilag = bilagForAar(bilag, year.aar)
   sektion(`Bilagsoversigt (${aaretsBilag.length})`)
   if (aaretsBilag.length === 0) {
     row('Ingen bilag registreret.', '')
