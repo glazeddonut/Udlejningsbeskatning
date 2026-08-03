@@ -36,6 +36,13 @@
   --text: #e8ecf6;
   --text-muted: #9aa3b8;
 
+  /* Status-farverne var kun stemt til den lyse flade. På den mørke baggrund lå de
+     for tæt på den for at kunne læses — og afstemningens markering af en difference
+     skal være læsbar i begge temaer. Samme tre variabler, lysere toner. */
+  --ok: #4ec07f;
+  --warn: #e5a743;
+  --err: #f08a72;
+
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
@@ -232,6 +239,11 @@ table.data tr.total td { font-weight: 700; border-top: 2px solid var(--border); 
   border-bottom: 1px solid var(--border);
 }
 .regnskab table.rg td.num, .regnskab table.rg th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Luft mellem kolonnerne. De fleste regnskabstabeller har kun to kolonner, hvor den
+   højrestillede fylder resten af bredden, men afstemningen og bilagsoversigten har
+   fire og fem — og uden vandret polstring støder cellerne direkte op til hinanden
+   ("2.695,00 kr.Stemmer"). */
+.regnskab table.rg td + td, .regnskab table.rg th + th { padding-left: 18px; }
 .regnskab table.rg tr.sum td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
 /* Hjemløs post: en værdi under en nøgle kontoplanen ikke kender. Den tælles med i
    totalen, så den skal være synlig — ikke skjult og ikke en fejl (ADR-0001). */
@@ -242,6 +254,21 @@ table.data tr.total td { font-weight: 700; border-top: 2px solid var(--border); 
    handler om et bilag, den anden om en værdi i et talsæt. */
 table.data td.ukendt-post { font-style: italic; color: var(--text-muted); }
 .regnskab .rg-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
+
+/* ── Afstemningen: bilagssum mod indtastet årsbeløb (ADR-0005) ──
+   Kun poster MED bilag afstemmes. En post uden bilag er ikke en fejl og holdes
+   derfor neutral og dæmpet — ellers ville næsten hver eneste række lyse, og en
+   advarsel der altid lyser, læres der at ignorere. Farverne er temavariabler, så
+   markeringen er læsbar både lyst og mørkt; statusteksten står desuden med ord i
+   sin egen celle, så printet (hvor alt tvinges til sort) ikke mister dommen. */
+.regnskab table.rg.afstemning td.status { white-space: nowrap; }
+.regnskab table.rg tr.afst-stemmer td.status { color: var(--ok); }
+.regnskab table.rg tr.afst-ingen_bilag td { color: var(--text-muted); }
+.regnskab table.rg tr.afst-difference td { color: var(--err); font-weight: 600; }
+/* Ukendt post: bilaget peger ikke på nogen post i kontoplanen og kan derfor slet
+   ikke afstemmes. Samme dæmpede kursiv som den hjemløse post ovenfor. */
+.regnskab table.rg tr.afst-ukendt_post td { font-style: italic; color: var(--text-muted); }
+.regnskab .rg-forklaring { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; }
 
 @media print {
   /* Skjul alt undtagen regnskabet, og lad det fylde siden. */

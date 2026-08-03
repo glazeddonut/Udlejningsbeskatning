@@ -29,6 +29,7 @@
 // disken, næste gang brugeren bruger appen, ikke udføres på ny ved hver visning.
 
 import { findPostId } from './kontoplan.js'
+import { oere } from './format.js'
 
 // De kategorier vælgeren tilbød, oversat til poster. Alle kategorier på nær tre er
 // entydige.
@@ -88,6 +89,47 @@ export function bilagPost(b) {
   if (post) return { label: post.label, kendt: true }
   const bevaret = String(b?.kategori ?? '').trim() || String(b?.post_id ?? '').trim()
   return { label: bevaret ? `${bevaret} (ukendt post)` : '', kendt: false }
+}
+
+// Bilagets fortegn, set fra postens egen gruppe.
+//
+// Et bilags type og postens gruppe kan modsige hinanden: en kreditnota på husleje er
+// et 'udgift'-bilag på en indtægtspost. Afgjort i #9/#13: POSTEN bestemmer hvilken
+// række bilaget hører til, TYPEN bestemmer kun fortegnet inden for den række. En
+// kreditnota trækker altså fra huslejens bilagssum — den flytter ikke bilaget over på
+// udgiftssiden, hvor den ville se ud som en fradragsberettiget driftsudgift.
+//
+// Den naturlige retning er derfor gruppens egen: en indtægtspost vokser af en
+// indtægt, alle andre grupper (udgifter, renteudgifter, forbedringer) vokser af en
+// udgift. Et bilag der peger den anden vej, trækker fra.
+function bilagsFortegn(gruppe, type) {
+  const naturlig = gruppe === 'indtaegter' ? 'indtaegt' : 'udgift'
+  return type === naturlig ? 1 : -1
+}
+
+// Bilagssummen pr. post — den ene halvdel af afstemningen (ADR-0005). Den anden
+// halvdel, det indtastede årsbeløb, kommer fra talsættet og hører hjemme hos
+// opstillingen; her ved bilagenes eget seam vides intet om talsæt eller pro rata.
+//
+// Bilag hvis post kontoplanen ikke kender (post_id = null, eller et id der er drevet
+// væk) kan ikke afstemmes mod nogen post. De TÆLLES kun, så de kan vises markeret frem
+// for at forsvinde tavst — de summes bevidst ikke. Uden en post er der ingen gruppe at
+// se fortegnet fra, og en sum ville derfor enten låne bilagsoversigtens konvention
+// (indtægt positiv, udgift negativ) og dermed bære et andet fortegn end alle de øvrige
+// rækker, eller lægge indtægter og udgifter oven i hinanden og vise 0. Beløbene står
+// bilag for bilag i bilagsoversigten.
+export function bilagssummer(aaretsBilag) {
+  const perPost = {}
+  const ukendte = { antal: 0 }
+  for (const b of aaretsBilag ?? []) {
+    const post = findPostId(b?.post_id)
+    if (!post) { ukendte.antal += 1; continue }
+    const p = (perPost[post.id] ||= { antal: 0, sum: 0 })
+    p.antal += 1
+    p.sum += bilagsFortegn(post.gruppe, b?.type) * (Number(b?.beloeb) || 0)
+  }
+  for (const p of Object.values(perPost)) p.sum = oere(p.sum)
+  return { perPost, ukendte }
 }
 
 // Alle bilag, hvert år nummereret uafhængigt, sorteret efter id. Rene funktioner:

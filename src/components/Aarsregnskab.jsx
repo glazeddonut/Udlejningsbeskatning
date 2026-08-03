@@ -85,8 +85,39 @@ export default function Aarsregnskab({ years, persons, property, loans, leases, 
   )
 }
 
+const klasser = (...c) => c.filter(Boolean).join(' ') || undefined
+
+// Én tabel fra opstillingen: kolonneoverskrifter og celler, begge kolonnestyret.
+// Både afstemningen og bilagsoversigten renderes herigennem, så de to ikke kan drive
+// fra hinanden. `raekkeKlasse` lader afstemningen markere sine rækker.
+function OpstillingsTabel({ tabel, klasse, raekkeKlasse = () => undefined }) {
+  if (tabel.raekker.length === 0) {
+    return <table className="rg"><tbody><tr><td>{tabel.tom_tekst}</td><td className="num" /></tr></tbody></table>
+  }
+  return (
+    <table className={klasser('rg', klasse)}>
+      <thead>
+        <tr>
+          {tabel.kolonner.map(k => <th key={k.id} className={k.num ? 'num' : undefined}>{k.label}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {tabel.raekker.map(r => (
+          <tr key={r.id} className={raekkeKlasse(r)}>
+            {tabel.kolonner.map(k => (
+              <td key={k.id} className={klasser(k.num && 'num', k.id === 'status' && 'status')}>
+                {r.celler[k.id]}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 function Opstilling({ opstilling }) {
-  const { hoved, sektioner, bilagsoversigt, note } = opstilling
+  const { hoved, sektioner, afstemning, bilagsoversigt, note } = opstilling
   return (
     <div className="regnskab">
       <div className="rg-head">
@@ -112,29 +143,20 @@ function Opstilling({ opstilling }) {
         </section>
       ))}
 
-      <h3 className="rg-sektion">{bilagsoversigt.titel}</h3>
-      {bilagsoversigt.antal === 0 ? (
-        <table className="rg"><tbody><tr><td>{bilagsoversigt.tom_tekst}</td><td className="num" /></tr></tbody></table>
-      ) : (
-        <table className="rg">
-          <thead>
-            <tr>
-              {bilagsoversigt.kolonner.map(k => (
-                <th key={k.id} className={k.num ? 'num' : undefined}>{k.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {bilagsoversigt.raekker.map(r => (
-              <tr key={r.id}>
-                {bilagsoversigt.kolonner.map(k => (
-                  <td key={k.id} className={k.num ? 'num' : undefined}>{r.celler[k.id]}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Afstemningen findes kun ved grundlaget faktisk — bilag dokumenterer det der
+          er sket, ikke det der er budgetteret. Ved budget er den fraværende (ADR-0005).
+          Statussen står som TEKST i sin egen celle og ikke kun som en farve, så den
+          også overlever printet, hvor alt tvinges til sort. */}
+      {afstemning && (
+        <section>
+          <h3 className="rg-sektion">{afstemning.titel}</h3>
+          <OpstillingsTabel tabel={afstemning} klasse="afstemning" raekkeKlasse={r => `afst-${r.status}`} />
+          <p className="rg-forklaring">{afstemning.forklaring}</p>
+        </section>
       )}
+
+      <h3 className="rg-sektion">{bilagsoversigt.titel}</h3>
+      <OpstillingsTabel tabel={bilagsoversigt} />
 
       <p className="rg-note">{note}</p>
     </div>

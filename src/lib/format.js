@@ -12,6 +12,12 @@ export function kr2(n) {
   return v.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr.'
 }
 
+// Afrund til øre — den mindste enhed et beløb kan bære. Bruges hvor flydende
+// mellemresultater ellers ville give en difference der ikke findes (0,1 + 0,2).
+export function oere(n) {
+  return Math.round((Number(n) || 0) * 100) / 100
+}
+
 // Formatér et tal uden enhed, fx 79200 → "79.200"
 export function tal(n) {
   const v = Number(n) || 0

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bilagForAar, medBilagsnumre, migrerBilag, postIdForKategori, bilagPost } from './bilag.js'
+import { bilagForAar, medBilagsnumre, migrerBilag, postIdForKategori, bilagPost, bilagssummer } from './bilag.js'
 
 // Bilagsnummeret er ikke stamdata — det er en egenskab ved årets samlede bilagsliste,
 // og det udledes derfor ved hvert opslag. Testene her fastholder de tre ting der
@@ -160,6 +160,75 @@ test('et bilag helt uden post og uden kategori viser ingenting frem for en falsk
 test('et post_id kontoplanen ikke kender markeres som ukendt frem for at blive vist råt', () => {
   assert.deepEqual(bilagPost({ post_id: 'udgifter.ejerforening' }),
     { label: 'udgifter.ejerforening (ukendt post)', kendt: false })
+})
+
+// ── Bilagssummen pr. post — den ene halvdel af afstemningen (ADR-0005) ────────
+//
+// Fortegnsreglen er afgjort i #9/#13: POSTEN bestemmer hvilken række bilaget hører
+// til, TYPEN bestemmer fortegnet inden for den række. Uden den regel ville en
+// kreditnota på husleje lande på udgiftssiden og dér ligne en driftsudgift.
+
+test('et bilag med samme retning som sin post lægger til bilagssummen', () => {
+  const { perPost } = bilagssummer([
+    b(1, 2025, { post_id: 'udgifter.vedligeholdelse', type: 'udgift', beloeb: 5211 }),
+    b(2, 2025, { post_id: 'indtaegter.leje', type: 'indtaegt', beloeb: 21774 }),
+  ])
+  assert.deepEqual(perPost['udgifter.vedligeholdelse'], { antal: 1, sum: 5211 })
+  assert.deepEqual(perPost['indtaegter.leje'], { antal: 1, sum: 21774 })
+})
+
+test('et bilag med modsat retning trækker fra sin egen posts sum — det skifter ikke post', () => {
+  const { perPost } = bilagssummer([
+    b(1, 2025, { post_id: 'indtaegter.leje', type: 'indtaegt', beloeb: 22774 }),
+    b(2, 2025, { post_id: 'indtaegter.leje', type: 'udgift', beloeb: 1000 }),      // kreditnota
+    b(3, 2025, { post_id: 'udgifter.vedligeholdelse', type: 'indtaegt', beloeb: 789 }), // refusion
+    b(4, 2025, { post_id: 'udgifter.vedligeholdelse', type: 'udgift', beloeb: 6000 }),
+  ])
+  assert.deepEqual(perPost['indtaegter.leje'], { antal: 2, sum: 21774 })
+  assert.deepEqual(perPost['udgifter.vedligeholdelse'], { antal: 2, sum: 5211 })
+})
+
+test('de ikke-summerbare poster tæller som udgifter — de er betalte beløb', () => {
+  const { perPost } = bilagssummer([
+    b(1, 2025, { post_id: 'renteudgifter.renteudgifter', type: 'udgift', beloeb: 17849 }),
+    b(2, 2025, { post_id: 'forbedringer.forbedringer', type: 'udgift', beloeb: 40000 }),
+  ])
+  assert.equal(perPost['renteudgifter.renteudgifter'].sum, 17849)
+  assert.equal(perPost['forbedringer.forbedringer'].sum, 40000)
+})
+
+test('summen afrundes til øre, så flydende mellemresultater ikke giver falske differencer', () => {
+  const { perPost } = bilagssummer([
+    b(1, 2025, { post_id: 'udgifter.andet', type: 'udgift', beloeb: 0.1 }),
+    b(2, 2025, { post_id: 'udgifter.andet', type: 'udgift', beloeb: 0.2 }),
+  ])
+  assert.equal(perPost['udgifter.andet'].sum, 0.3)
+})
+
+test('bilag hvis post kontoplanen ikke kender tælles for sig i stedet for at forsvinde', () => {
+  const { perPost, ukendte } = bilagssummer([
+    b(1, 2025, { post_id: null, kategori: 'Ejerforening', type: 'udgift', beloeb: 1200 }),
+    b(2, 2025, { post_id: 'udgifter.ejerforening', type: 'udgift', beloeb: 800 }),
+    b(3, 2025, { post_id: 'udgifter.vedligeholdelse', type: 'udgift', beloeb: 5211 }),
+  ])
+  assert.deepEqual(ukendte, { antal: 2 })
+  assert.deepEqual(Object.keys(perPost), ['udgifter.vedligeholdelse'])
+})
+
+// Uden en post er der ingen gruppe at se fortegnet fra. Blev de ukendte bilag summet,
+// ville en indtægt og en udgift på samme beløb udligne hinanden og vise 0 — altså
+// præcis det tavse tab markeringen skal forhindre.
+test('ukendte bilag summes ikke — to modsatrettede bilag udligner ikke hinanden væk', () => {
+  const { ukendte } = bilagssummer([
+    b(1, 2025, { post_id: null, kategori: 'Ejerforening', type: 'udgift', beloeb: 1200 }),
+    b(2, 2025, { post_id: null, kategori: 'Ejerforening', type: 'indtaegt', beloeb: 1200 }),
+  ])
+  assert.deepEqual(ukendte, { antal: 2 })
+})
+
+test('ingen bilag giver ingen poster og ingen ukendte — ikke NaN', () => {
+  assert.deepEqual(bilagssummer([]), { perPost: {}, ukendte: { antal: 0 } })
+  assert.deepEqual(bilagssummer(undefined), { perPost: {}, ukendte: { antal: 0 } })
 })
 
 test('bilagets øvrige felter bæres uændret med, og inddata muteres ikke', () => {

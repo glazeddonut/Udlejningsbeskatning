@@ -341,6 +341,169 @@ test('et bilag på en ikke-summerbar post ændrer ikke udlejningsresultatet', ()
   assert.equal(med.sum.forbedringer, uden.sum.forbedringer, 'bilaget er dokumentation, ikke en indtastning')
 })
 
+// ── Afstemningen (ADR-0005) ───────────────────────────────────────────────────
+
+const afstemning = (o) => o.opstilling.afstemning
+const afstRaekke = (o, id) => afstemning(o).raekker.find(r => r.id === id)
+
+test('en post hvis bilag summer til det indtastede årsbeløb markeres som stemmende', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5211 })] })      // udgifter.vedligeholdelse = 5211
+  const r = afstRaekke(o, 'udgifter.vedligeholdelse')
+  assert.equal(r.indtastet, 5211)
+  assert.equal(r.bilagssum, 5211)
+  assert.equal(r.difference, 0)
+  assert.equal(r.status, 'stemmer')
+})
+
+test('en post hvor bilagene ikke summer til det indtastede beløb markeres med differencen', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5000 })] })      // indtastet 5211
+  const r = afstRaekke(o, 'udgifter.vedligeholdelse')
+  assert.equal(r.bilagssum, 5000)
+  assert.equal(r.difference, -211)
+  assert.equal(r.status, 'difference')
+  assert.equal(r.celler.difference, '-211,00 kr.')
+  assert.equal(r.celler.status, 'Difference')
+})
+
+// Alle tre tal skal stå på rækken — også når differencen er nul. "Stemmer" alene
+// fortæller ikke, at der faktisk ER regnet en difference ud.
+test('rækken viser indtastet årsbeløb, bilagssum OG difference — også når den er nul', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5211 })] })
+  const r = afstRaekke(o, 'udgifter.vedligeholdelse')
+  assert.equal(r.celler.indtastet, '5.211,00 kr.')
+  assert.equal(r.celler.bilagssum, '5.211,00 kr.')
+  assert.equal(r.celler.difference, '0,00 kr.')
+})
+
+test('en difference over det indtastede får eksplicit fortegn, så retningen ikke skal gættes', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5211.75 })] })
+  assert.equal(afstRaekke(o, 'udgifter.vedligeholdelse').celler.difference, '+0,75 kr.')
+})
+
+test('flere bilag på samme post lægges sammen, og øre tæller med', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5000.5 }), bl(2, 2025, { beloeb: 210.5 })] })
+  const r = afstRaekke(o, 'udgifter.vedligeholdelse')
+  assert.equal(r.antal, 2)
+  assert.equal(r.bilagssum, 5211)
+  assert.equal(r.status, 'stemmer')
+})
+
+// Det er det EFFEKTIVE årsbeløb der afstemmes — huslejen tastes som 4.500 kr. pr.
+// måned, men regnskabet viser 21.774 kr., og det er det tal bilagene skal dokumentere.
+test('en pro rata-post afstemmes mod årsbeløbet, ikke mod månedsbeløbet', () => {
+  const o = kald({ bilag: [bl(1, 2025, { post_id: 'indtaegter.leje', type: 'indtaegt', beloeb: 21774 })] })
+  const r = afstRaekke(o, 'indtaegter.leje')
+  assert.equal(r.indtastet, 21774)
+  assert.equal(r.status, 'stemmer')
+})
+
+// Posten bestemmer HVILKEN række bilaget hører til, typen bestemmer FORTEGNET.
+// En kreditnota på husleje er et 'udgift'-bilag på en indtægtspost: den trækker fra
+// huslejens bilagssum og flytter ikke over på udgiftssiden (afgjort i #9/#13).
+test('en kreditnota trækker fra sin egen posts bilagssum i stedet for at skifte side', () => {
+  const o = kald({
+    bilag: [
+      bl(1, 2025, { post_id: 'indtaegter.leje', type: 'indtaegt', beloeb: 22774 }),
+      bl(2, 2025, { post_id: 'indtaegter.leje', type: 'udgift', beloeb: 1000 }),   // kreditnota
+    ],
+  })
+  const leje = afstRaekke(o, 'indtaegter.leje')
+  assert.equal(leje.antal, 2)
+  assert.equal(leje.bilagssum, 21774)
+  assert.equal(leje.status, 'stemmer')
+  assert.equal(afstRaekke(o, 'udgifter.andet').antal, 0, 'kreditnotaen må ikke lande på en udgiftspost')
+})
+
+test('en refusion på en udgiftspost trækker tilsvarende fra udgiftspostens bilagssum', () => {
+  const o = kald({
+    bilag: [
+      bl(1, 2025, { beloeb: 6000 }),
+      bl(2, 2025, { type: 'indtaegt', beloeb: 789 }),   // refusion på vedligeholdelse
+    ],
+  })
+  assert.equal(afstRaekke(o, 'udgifter.vedligeholdelse').bilagssum, 5211)
+})
+
+test('en post uden bilag vises neutralt som "ingen bilag" — ikke som en fejl', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5211 })] })
+  const r = afstRaekke(o, 'udgifter.grundskyld')                  // indtastet 3120, ingen bilag
+  assert.equal(r.indtastet, 3120)
+  assert.equal(r.bilagssum, null)
+  assert.equal(r.difference, null)
+  assert.equal(r.status, 'ingen_bilag')
+  assert.equal(r.celler.status, 'Ingen bilag')
+  assert.equal(r.celler.bilagssum, '—')
+  assert.equal(r.celler.difference, '—', 'uden bilag findes der ingen difference at vise')
+})
+
+test('en post uden både beløb og bilag får ingen række — den fylder kun afstemningen', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5211 })] })
+  assert.equal(afstRaekke(o, 'udgifter.forsikring'), undefined)   // 0 kr. og ingen bilag
+})
+
+test('et år helt uden bilag giver en tom afstemning med en forklarende tekst', () => {
+  const o = kald({ bilag: [bl(1, 2026)] })                        // bilaget hører til et andet år
+  assert.deepEqual(afstemning(o).raekker, [])
+  assert.equal(afstemning(o).tom_tekst, 'Ingen bilag registreret — der er intet at afstemme.')
+})
+
+// Bilag på renteudgifter og forbedringer skal kunne afstemmes, selv om posterne ligger
+// uden for udlejningsresultatet. Deres beløb ligger på gruppeniveau i talsættet —
+// `saet.forbedringer` er en skalar, og `saet.renteudgifter` er nøglet på lånets id.
+test('bilag på de ikke-summerbare poster afstemmes uden at påvirke udlejningsresultatet', () => {
+  const uden = kald()
+  const o = kald({
+    bilag: [
+      bl(1, 2025, { post_id: 'renteudgifter.renteudgifter', beloeb: 17849 }),
+      bl(2, 2025, { post_id: 'forbedringer.forbedringer', beloeb: 40000 }),
+    ],
+  })
+  const renter = afstRaekke(o, 'renteudgifter.renteudgifter')
+  assert.equal(renter.indtastet, 17849, 'summen af lånenes renter, ikke en nøgleopslag')
+  assert.equal(renter.status, 'stemmer')
+  const forbedring = afstRaekke(o, 'forbedringer.forbedringer')
+  assert.equal(forbedring.indtastet, 0)
+  assert.equal(forbedring.bilagssum, 40000)
+  assert.equal(forbedring.status, 'difference')
+  assert.equal(o.sum.udlejningsresultat, uden.sum.udlejningsresultat)
+  assert.equal(o.sum.forbedringer, 0, 'bilaget er dokumentation, ikke en indtastning')
+})
+
+test('bilag med ukendt post samles i én markeret række — de forsvinder ikke tavst', () => {
+  const o = kald({
+    bilag: [
+      bl(1, 2025, { beloeb: 5211 }),
+      bl(2, 2025, { post_id: null, kategori: 'Ejerforening', beloeb: 1200 }),
+      bl(3, 2025, { post_id: 'udgifter.ejerforening', beloeb: 800 }),   // id kontoplanen ikke kender
+    ],
+  })
+  const r = afstRaekke(o, 'afstemning.ukendte')
+  assert.equal(r.status, 'ukendt_post')
+  assert.equal(r.antal, 2)
+  assert.equal(r.celler.post, 'Bilag med ukendt post (2)')
+  assert.equal(r.celler.status, 'Kan ikke afstemmes')
+  // Rækken tæller, den summer ikke: uden en post er der ingen gruppe at se fortegnet
+  // fra, og samme kolonne må ikke bære to forskellige fortegnskonventioner.
+  assert.equal(r.bilagssum, null)
+  assert.equal(r.celler.bilagssum, '—')
+  assert.equal(r.celler.difference, '—')
+  assert.equal(afstRaekke(o, 'udgifter.vedligeholdelse').status, 'stemmer', 'de øvrige poster afstemmes stadig')
+})
+
+test('afstemningen gælder kun grundlaget faktisk — ved budget er den fraværende', () => {
+  const medBilag = { bilag: [bl(1, 2025, { beloeb: 5211 })] }
+  assert.ok(kald(medBilag, 2025, 'faktisk').opstilling.afstemning)
+  assert.equal(kald(medBilag, 2025, 'budget').opstilling.afstemning, null)
+})
+
+test('afstemningens kolonner er de samme på begge flader', () => {
+  const o = kald({ bilag: [bl(1, 2025, { beloeb: 5211 })] })
+  assert.deepEqual(afstemning(o).kolonner.map(k => k.id), ['post', 'indtastet', 'bilagssum', 'difference', 'status'])
+  for (const r of afstemning(o).raekker) {
+    assert.deepEqual(Object.keys(r.celler), ['post', 'indtastet', 'bilagssum', 'difference', 'status'])
+  }
+})
+
 // ── Noten ─────────────────────────────────────────────────────────────────────
 
 test('noteteksten findes ét sted og er den samme i opstillingen', () => {

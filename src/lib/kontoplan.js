@@ -5,9 +5,8 @@
 // det udlejede. Målet er ÉN kilde til sandhed, så rækkerne i et regnskab altid summer
 // til totalen (ADR-0001).
 //
-// Indtastningen (Årets tal) og summeringen læser herfra i dag. Årsregnskabet, PDF'en
-// og bilagene har stadig hver deres egen liste — de flyttes over når opstillingen og
-// bilagsafstemningen bygges, netop for ikke at skrive dem om to gange.
+// Indtastningen (Årets tal), summeringen, opstillingen, bilagene og afstemningen læser
+// alle herfra. Ingen af dem har længere sin egen liste over hvad en post kan hedde.
 //
 // Gruppenavnene er talsættets egne nøgler ('indtaegter' / 'udgifter'), så en post kan
 // bruges direkte i effektivBeloeb(saet, gruppe, noegle) uden oversættelse undervejs.

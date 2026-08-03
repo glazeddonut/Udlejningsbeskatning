@@ -13,6 +13,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 
 const A4 = [595.28, 841.89]
 const MARGIN = 50
+const INDHOLD = A4[0] - 2 * MARGIN     // tilgængelig bredde mellem margenerne
 const INK = rgb(0.11, 0.14, 0.2)
 const MUTED = rgb(0.42, 0.45, 0.53)
 const LINE = rgb(0.8, 0.83, 0.88)
@@ -27,17 +28,32 @@ const BILAG_LAYOUT = {
   dato: { x: 34 },
   tekst: { x: 110, maks: 30 },
   post: { x: 280, maks: 26 },
-  beloeb: { hoejre: true },
+  beloeb: { hoejre: true, x: INDHOLD },
+}
+
+// Afstemningens kolonner. Post-kolonnen bærer kontoplanens længste label
+// ("Grundskyld (ejendomsskat)") og rækken "Bilag med ukendt post (n)"; de tre
+// beløbskolonner er højrestillede og skrives med ører; statuskolonnen bærer den
+// længste tekst, "Kan ikke afstemmes". Pladserne er målt med pdf-libs egen fontmetrik,
+// så kolonnerne ikke kan løbe ind i hinanden.
+const AFSTEMNING_LAYOUT = {
+  post: { x: 0, maks: 34 },
+  indtastet: { hoejre: true, x: 220 },
+  bilagssum: { hoejre: true, x: 300 },
+  difference: { hoejre: true, x: 385 },
+  status: { x: 395 },
 }
 
 // Får opstillingen en kolonne mere, skal den også have en plads på siden. Et tavst
 // fald tilbage til x = 0 ville tegne den oven i "Nr." — altså præcis den slags drift
 // mellem to lister, der ikke må kunne opstå uden at nogen opdager det.
-function bilagLayout(kolonneId) {
-  const l = BILAG_LAYOUT[kolonneId]
-  if (!l) throw new Error(`Bilagsoversigtens kolonne "${kolonneId}" har ingen plads i PDF-layoutet`)
+function layoutFor(navn, kort, kolonneId) {
+  const l = kort[kolonneId]
+  if (!l) throw new Error(`${navn}s kolonne "${kolonneId}" har ingen plads i PDF-layoutet`)
   return l
 }
+const bilagLayout = (id) => layoutFor('Bilagsoversigten', BILAG_LAYOUT, id)
+const afstemningLayout = (id) => layoutFor('Afstemningen', AFSTEMNING_LAYOUT, id)
 
 // pdf-lib's Helvetica koder WinAnsi. Æ, ø, å, tankestreger, krøllede citationstegn,
 // midtprik og no-break space kodes KORREKT — de skal ikke erstattes, og regnskabet
@@ -76,6 +92,34 @@ export async function genererRegnskabPdf(opgoerelse) {
   }
   const sektion = (t) => { need(30); y -= 8; text(t.toUpperCase(), MARGIN, y, 10, bold, MUTED); y -= 6; hline(y); y -= 12 }
 
+  // Én tabel fra opstillingen: overskrifter, streg, rækker. Kolonnernes pladser kommer
+  // fra et layoutkort, alt indhold fra opstillingen. Både afstemningen og
+  // bilagsoversigten går denne ene vej, så de to ikke kan blive tegnet hver sin måde.
+  // `fontFor` lader en enkelt række skille sig ud — afstemningen sætter en difference
+  // med fed.
+  const tabel = (kolonner, raekker, layout, fontFor = () => font) => {
+    need(18)
+    for (const k of kolonner) {
+      const l = layout(k.id)
+      if (l.hoejre) right(k.label, MARGIN + l.x, y, 9, bold, MUTED)
+      else text(k.label, MARGIN + l.x, y, 9, bold, MUTED)
+    }
+    y -= 6; hline(y); y -= 12
+    for (const r of raekker) {
+      need(15)
+      const f = fontFor(r)
+      for (const k of kolonner) {
+        const l = layout(k.id)
+        const celle = r.celler[k.id] ?? ''
+        if (l.hoejre) right(celle, MARGIN + l.x, y, 10, f)
+        else text(l.maks ? celle.slice(0, l.maks) : celle, MARGIN + l.x, y, 10, f)
+      }
+      y -= 15
+    }
+  }
+
+  const smaatekst = (s) => wrapText(s, INDHOLD, 8, font).forEach(l => { need(11); text(l, MARGIN, y, 8, font, MUTED); y -= 11 })
+
   // ── Hoved ──
   text(opstilling.hoved.overskrift, MARGIN, y, 18, bold); y -= 24
   opstilling.hoved.linjer.forEach((l, i) => {
@@ -90,34 +134,28 @@ export async function genererRegnskabPdf(opgoerelse) {
     for (const r of s.raekker) linje(r.label, r.vaerdi, { f: r.sum ? bold : font })
   }
 
+  // ── Afstemning mod bilag ──
+  // Kun ved grundlaget faktisk; ved budget er den fraværende i opstillingen, og så
+  // står der ikke noget her heller. En difference sættes med fed, men dommen står
+  // også som ord i statuskolonnen — en PDF læses lige så tit i sort/hvid.
+  const afst = opstilling.afstemning
+  if (afst) {
+    sektion(afst.titel)
+    if (afst.raekker.length === 0) linje(afst.tom_tekst, '')
+    else tabel(afst.kolonner, afst.raekker, afstemningLayout, r => (r.status === 'difference' ? bold : font))
+    y -= 2
+    smaatekst(afst.forklaring)
+  }
+
   // ── Bilagsoversigt ──
   const oversigt = opstilling.bilagsoversigt
   sektion(oversigt.titel)
-  if (oversigt.antal === 0) {
-    linje(oversigt.tom_tekst, '')
-  } else {
-    need(18)
-    for (const k of oversigt.kolonner) {
-      const l = bilagLayout(k.id)
-      if (l.hoejre) right(k.label, W - MARGIN, y, 9, bold, MUTED)
-      else text(k.label, MARGIN + l.x, y, 9, bold, MUTED)
-    }
-    y -= 6; hline(y); y -= 12
-    for (const r of oversigt.raekker) {
-      need(15)
-      for (const k of oversigt.kolonner) {
-        const l = bilagLayout(k.id)
-        const celle = r.celler[k.id] ?? ''
-        if (l.hoejre) right(celle, W - MARGIN, y, 10)
-        else text(l.maks ? celle.slice(0, l.maks) : celle, MARGIN + l.x, y, 10)
-      }
-      y -= 15
-    }
-  }
+  if (oversigt.antal === 0) linje(oversigt.tom_tekst, '')
+  else tabel(oversigt.kolonner, oversigt.raekker, bilagLayout)
 
   // ── Note ──
   need(60); y -= 6; hline(y); y -= 12
-  wrapText(opstilling.note, W - 2 * MARGIN, 8, font).forEach(l => { need(11); text(l, MARGIN, y, 8, font, MUTED); y -= 11 })
+  smaatekst(opstilling.note)
 
   // ── Vedhæftede bilag (billeder + PDF-sider) ──
   for (const b of bilag) {
