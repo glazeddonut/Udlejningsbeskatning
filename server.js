@@ -34,7 +34,7 @@ const DEFAULT_SETTINGS = {
 const emptyDb = () => ({
   persons: [],          // { id, navn, cpr, rolle: 'udlejer' | 'medejer' }
   property: null,       // singleton
-  loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse{} }
+  loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, startdato, rente_pct, haeftelse{} }
   leases: [],           // lejekontrakter til datteren (én aktiv pr. år) { id, startdato, slutdato, maanedlig_leje, ... }
   years: [],            // { id, aar, budget:{...}, faktisk:{...} }
   bilag: [],            // { id, aar, dato, tekst, beloeb, post_id, type, filnavn, mimetype, filsti }
@@ -162,7 +162,7 @@ app.post('/api/loans', (req, res) => {
   const db = loadDb()
   const svar = validerLaan(req.body)
   if (!svar.ok) return afvis(res, svar)
-  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse } = req.body
+  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, startdato, rente_pct, haeftelse } = req.body
   const loan = {
     id: db.nextLoanId++,
     type: type ?? 'realkredit',
@@ -170,6 +170,7 @@ app.post('/api/loans', (req, res) => {
     hovedstol: hovedstol ?? 0,
     restgaeld: restgaeld ?? 0,
     restgaeld_dato: restgaeld_dato ?? '',   // peildato for restgælden (fx bankens 31/12-indberetning)
+    startdato: startdato ?? '',             // hvornår lånet blev optaget — styrer renteskønnet i optagelsesåret
     rente_pct: rente_pct ?? 0,
     haeftelse: haeftelse ?? {},   // { personId: pct }
   }
@@ -181,11 +182,12 @@ app.put('/api/loans/:id', (req, res) => {
   const db = loadDb()
   const svar = validerLaan(req.body)
   if (!svar.ok) return afvis(res, svar)
-  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse } = req.body
+  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, startdato, rente_pct, haeftelse } = req.body
   const l = db.loans.find(l => l.id === Number(req.params.id))
   if (l) {
     l.type = type; l.laangiver = laangiver; l.hovedstol = hovedstol
     l.restgaeld = restgaeld; l.restgaeld_dato = restgaeld_dato ?? ''
+    l.startdato = startdato ?? ''
     l.rente_pct = rente_pct; l.haeftelse = haeftelse ?? {}
   }
   saveDb(db)

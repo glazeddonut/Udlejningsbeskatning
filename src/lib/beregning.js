@@ -145,7 +145,9 @@ export function prefillSaet({ leases, property, loans, aar }) {
   const g = aarsgrundlag(leases, aar)
   s.fra_dato = g.fra_dato
   s.til_dato = g.til_dato
-  for (const l of loans || []) s.renteudgifter[l.id] = estimeretAarligRente(l)
+  // Renteskønnet er ÅRETS, ikke et helt års: et lån optaget i august skal ikke føde
+  // året med tolv måneders rente (renteskoen).
+  for (const l of loans || []) s.renteudgifter[l.id] = renteskoen(l, aar).beloeb
   if (g.lease) {
     s.indtaegter.leje = g.maanedlig_leje
     s.indtaegter.vand = g.vand
@@ -285,12 +287,21 @@ export function udlejningsdage360(saet) {
   return Math.max(0, dage)
 }
 
+// Faktiske kalenderdage mellem to ISO-datoer, inklusive begge ender. Ren dato-aritmetik
+// uden noget domænebegreb — den bærer hverken en udlejningsperiode eller en løbetid, så
+// to forskellige spørgsmål kan tælle dage med samme regnestykke uden at låne betydning
+// af hinanden. Negativt interval giver 0.
+const dageMellem = (fraISO, tilISO) => {
+  const f = parseDato(fraISO), t = parseDato(tilISO)
+  if (!f || !t) return 0
+  return Math.max(0, Math.round((t - f) / 86400000) + 1)
+}
+
 // Antal udlejningsdage (faktiske kalenderdage, inklusiv start og slut).
 // Uden periode: 0 — se udlejningsdage360 for hvorfor der ikke gættes.
 export function udlejningsdage(saet) {
   if (manglerPeriode(saet)) return 0
-  const f = parseDato(saet.fra_dato), t = parseDato(saet.til_dato)
-  return Math.max(0, Math.round((t - f) / 86400000) + 1)
+  return dageMellem(saet.fra_dato, saet.til_dato)
 }
 
 // Forholdsmæssige måneder til pro rata (dansk lejeret): summen af aktive dage / dage i
@@ -459,9 +470,102 @@ export function sumRenter(saet) {
   return sumValues(saet?.renteudgifter)
 }
 
-// Estimeret årlig renteudgift for et lån (restgæld × rente). Bruges som budget-skøn.
+// Estimeret årlig renteudgift for et lån (restgæld × rente). Svaret på "hvad koster
+// lånet på et HELT år" — årsuafhængigt og uden hensyn til hvornår lånet blev optaget.
+// Renteskønnet for ét bestemt år er et andet spørgsmål; det stiller man til renteskoen.
 export function estimeretAarligRente(loan) {
   return Math.round((Number(loan?.restgaeld) || 0) * (Number(loan?.rente_pct) || 0) / 100)
+}
+
+// Antal dage i et kalenderår (365, eller 366 i skudår). Året skal være et TAL —
+// `'2025' + 1` er "20251", og et skøn regnet på år 20251 ville være tavst forkert.
+const dageIKalenderaar = (aarN) => dageMellem(`${aarN}-01-01`, `${aarN}-12-31`)
+
+// Renteskønnet for ÉT år: hvad lånet kostede i renter i netop det år.
+//
+// DAGSKONVENTION — et bevidst valg (CLAUDE.md har tre, og de må ikke blandes sammen):
+// her tælles FAKTISKE kalenderdage, inklusive lånets startdag, delt med årets faktiske
+// længde (365/366). Ikke 30/360: det er indberetningsdage til felt 748 / rubrik 207 og
+// hører kun til et dagstal der indberettes — dette er et beløb. Og ikke pro rata-måneder:
+// de ganger et MÅNEDSbeløb op til et årsbeløb, mens renten allerede ER et årsbeløb der
+// skal skæres ned. Renter tilskrives desuden pr. dag på en saldo, så dage/år er den
+// konvention der svarer til det lånet faktisk gør.
+//
+// Dette er lånets løbetid i året — ikke udlejningsperioden. De to spørgsmål er
+// forskellige og må ikke låne tal af hinanden.
+//
+// MANGLENDE STARTDATO dækker HELE året, markeret med et flag. ADR-0002 gætter ikke en
+// manglende udlejningsperiode, men dét er et dagstal der INDBERETTES, hvor 0 er det
+// ærlige svar. Her er svaret et beløb: et skøn på 0 ville læses som "ingen rente" — et
+// forkert tal der ser legitimt ud — mens et helt års rente er præcis det feltet spørger
+// om. De lån der allerede står i databasen har ingen startdato og får samme skøn som før.
+//
+// DER FREMSKRIVES INGEN SALDO. Lånet har hverken løbetid eller afdragsform, så restgælden
+// på peildatoen bruges som den står. Er den målt langt fra året, siges det (peildatoAdvarsel)
+// frem for at blive regnet om på et gæt.
+export function renteskoen(loan, aar) {
+  const helAar = estimeretAarligRente(loan)
+  // Startdatoen læses ÉT sted, og en dato der ikke er en dato er lige så uoplyst som
+  // ingen dato — ellers kunne to grene svare hver sit om samme lån.
+  const startdato = parseDato(loan?.startdato) ? loan.startdato : ''
+  const manglerStartdato = !startdato
+
+  // Året læses som et tal. Er det slet ikke et årstal, er der intet år at skære
+  // skønnet til, og svaret er det uforkortede årsskøn — dagstallene siges at være
+  // ukendte (0/0) frem for at blive gættet.
+  const aarN = Number(aar)
+  if (!Number.isInteger(aarN))
+    return { beloeb: helAar, helAar, dage: 0, dageIAar: 0, foerOptagelse: false, manglerStartdato, peildatoAdvarsel: '' }
+
+  const iAar = dageIKalenderaar(aarN)
+  // Lånets løbetid i året, klippet til året — ISO-datoer sorterer leksikalsk, samme
+  // greb som periodeForAar bruger. Startdagen tæller med.
+  const aarStart = `${aarN}-01-01`, aarSlut = `${aarN}-12-31`
+  const dage = dageMellem(startdato > aarStart ? startdato : aarStart, aarSlut)
+  const foerOptagelse = !manglerStartdato && startdato > aarSlut
+  return {
+    beloeb: Math.round(helAar * dage / iAar),
+    helAar,
+    dage,
+    dageIAar: iAar,
+    // Året ligger helt før lånet blev optaget: der er ingen rente at skønne, og
+    // fladen skal kunne sige hvorfor frem for at vise et tomt felt uden grund.
+    foerOptagelse,
+    // Uden startdato dækker skønnet HELE året — se kommentaren over funktionen.
+    // Flaget er der, så antagelsen kan stå på skærmen i stedet for at være tavs.
+    manglerStartdato,
+    // Uden et skøn er der intet at advare om.
+    peildatoAdvarsel: foerOptagelse ? '' : peildatoAdvarsel(loan?.restgaeld_dato, aarN),
+  }
+}
+
+// Hvor langt fra året må restgældens peildato ligge, før skønnet kaldes svagt? Målt i
+// dage FRA årets nærmeste kant — 0 når saldoen er målt inde i selve året.
+//
+// Et halvt år. Grænsen er symmetrisk, fordi fejlen er det: en saldo målt lige før og en
+// målt lige efter året er begge tæt på årets egen. Bankens opgørelse pr. det seneste
+// årsskifte ligger 1 dag fra og er det bedste der findes — den må ikke advare. Omvendt
+// har en saldo et helt år på den anden side haft fire terminer til at flytte sig, og uden
+// en afdragsprofil kan skønnet ikke rette op på det. Det er den afstand peildatoen
+// 31.12.2026 har til 2025 — netop den der gav et helt års rente som skøn for 2025.
+const PEILDATO_TOLERANCE_DAGE = 183
+
+// Ligger restgældens peildato langt fra det år der regnes på? Tom streng = nej, ellers
+// den danske begrundelse brugeren får at se.
+//
+// En uoplyst peildato advares der ikke om: et uoplyst felt er ikke en fejl, og en
+// udateret saldo er ikke det samme som en saldo målt et forkert sted.
+function peildatoAdvarsel(peildato, aarN) {
+  if (!parseDato(peildato)) return ''
+  const aarStart = `${aarN}-01-01`, aarSlut = `${aarN}-12-31`
+  // dageMellem tæller begge ender med, så en dato 1 dag uden for året giver 2 — derfor −1.
+  if (peildato > aarSlut && dageMellem(aarSlut, peildato) - 1 > PEILDATO_TOLERANCE_DAGE)
+    return `Restgælden er målt pr. ${peildato} — længe efter udgangen af ${aarN}. `
+      + `Skønnet bygger på en saldo året ikke havde; brug bankens rentetal for ${aarN}.`
+  if (peildato < aarStart && dageMellem(peildato, aarStart) - 1 > PEILDATO_TOLERANCE_DAGE)
+    return `Restgælden er målt pr. ${peildato} — længe før ${aarN} begyndte. `
+      + `Saldoen er afdraget siden, så skønnet er for højt; brug bankens rentetal for ${aarN}.`
+  return ''
 }
 
 // Fordel et beløb efter andele { personId: pct }. Returnerer { personId: beløb }.

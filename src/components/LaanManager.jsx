@@ -80,6 +80,13 @@ function LaanRow({ loan, persons, reload }) {
         <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
           Restgæld {kr(loan.restgaeld)}{loan.restgaeld_dato ? ` (pr. ${datoTekst(loan.restgaeld_dato)})` : ''} · rente {pct(loan.rente_pct)} · {haefteTekst}
         </div>
+        {/* Startdatoen skærer renteskønnet til i optagelsesåret. Uden den dækker skønnet
+            hele året, og det skal kunne ses her frem for først at overraske i Årets tal. */}
+        <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+          {loan.startdato
+            ? `Optaget ${datoTekst(loan.startdato)}`
+            : <span className="badge neutral">Startdato mangler — renteskønnet dækker hele året</span>}
+        </div>
       </div>
       <button className="btn ghost" onClick={() => setRediger(true)}>Rediger</button>
     </div>
@@ -88,7 +95,8 @@ function LaanRow({ loan, persons, reload }) {
 
 function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
   const [l, setL] = useState(initial || {
-    type: 'realkredit', laangiver: '', hovedstol: 0, restgaeld: 0, restgaeld_dato: forrigeAarsskifte(), rente_pct: 0,
+    type: 'realkredit', laangiver: '', hovedstol: 0, restgaeld: 0, restgaeld_dato: forrigeAarsskifte(),
+    startdato: '', rente_pct: 0,
     haeftelse: standardHaeftelse(persons),
   })
   const upd = (patch) => setL({ ...l, ...patch })
@@ -109,6 +117,7 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
         <SelectField label="Type" value={l.type} onChange={v => upd({ type: v })} options={TYPER} />
         <TextField label="Långiver" value={l.laangiver} onChange={v => upd({ laangiver: v })} placeholder="fx Totalkredit / Nordea" />
         <NumberField label="Hovedstol" value={l.hovedstol} onChange={v => upd({ hovedstol: parseNum(v) })} />
+        <TextField label="Optaget" hint="lånets startdato — skærer renteskønnet til i optagelsesåret" type="date" value={l.startdato || ''} onChange={v => upd({ startdato: v })} />
         <NumberField label="Restgæld" hint="saldo på peildatoen" value={l.restgaeld} onChange={v => upd({ restgaeld: parseNum(v) })} />
         <TextField label="Restgæld pr." hint="peildato (fx bankens 31/12)" type="date" value={l.restgaeld_dato || ''} onChange={v => upd({ restgaeld_dato: v })} />
         <NumberField label="Rente" value={l.rente_pct} onChange={v => upd({ rente_pct: parseNum(v) })} suffix="%" />

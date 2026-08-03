@@ -27,7 +27,18 @@ kan forskellen udgøre et gaveelement.
 **Peildato**:
 Den dato en saldo er målt på — typisk lånets restgæld pr. bankens seneste opgørelse.
 En saldo uden peildato er ikke stamdata, den er et øjebliksbillede der forældes.
+Ligger den langt fra det år der regnes på, er renteskønnet svagt og siger det.
 _Undgå_: opgørelsesdato, skæringsdato
+
+**Lånets startdato**:
+Den dag lånet blev optaget. Skærer renteskønnet til den del af året lånet faktisk løb,
+så et lån optaget i august ikke foreslås med et helt års rente. Ikke det samme som
+lejekontraktens startdato — de to må ikke låne tal af hinanden.
+
+**Renteskøn**:
+Restgæld gange rente gange den del af året lånet løb. Et forslag, ikke en oplysning:
+det erstattes af bankens faktiske rentetal, og et beløb brugeren selv har tastet
+overskrives aldrig af det. Saldoen fremskrives ikke — der er ingen afdragsprofil.
 
 ### Skatteåret
 

@@ -217,12 +217,17 @@ test('et lån med tal, peildato og hæftelse accepteres', () => {
   assert.equal(validerLaan({ type: 'bank', restgaeld_dato: '' }).ok, true)   // peildato må mangle
 })
 
-test('lånets beløb, rente, peildato og hæftelse afvises når de ikke har domænets form', () => {
+test('lånets beløb, rente, datoer og hæftelse afvises når de ikke har domænets form', () => {
   assert.match(validerLaan({ restgaeld: 'halvanden million' }).begrundelse, /restgæld/i)
   assert.match(validerLaan({ hovedstol: true }).begrundelse, /hovedstol/i)
   assert.match(validerLaan({ rente_pct: 'tre' }).begrundelse, /rente/i)
   assert.match(validerLaan({ restgaeld_dato: '31/12-2026' }).begrundelse, /peildato/i)
   assert.match(validerLaan({ haeftelse: { 1: 120 } }).begrundelse, /hæftelse/i)
+  // Startdatoen styrer renteskønnet i optagelsesåret; en dato der ikke er en dato ville
+  // tavst blive læst som ingen startdato og give et helt års rente.
+  assert.match(validerLaan({ startdato: '9/8-2025' }).begrundelse, /startdato/i)
+  assert.equal(validerLaan({ startdato: '' }).ok, true)     // startdatoen må mangle
+  assert.equal(validerLaan({ startdato: '2025-08-09' }).ok, true)
 })
 
 // ── Lejekontrakten (POST og PUT /api/leases) ──────────────────────────────────

@@ -94,8 +94,9 @@ forskellen er synlig ved indtastning.
 
 ## Datamodel (JSON DB)
 
-`persons` (2 ægtefæller), `property` (singleton, m. ejerandele), `loans` (m. hæftelse
-og `restgaeld` + `restgaeld_dato` = peildato for saldoen), `leases` (liste af
+`persons` (2 ægtefæller), `property` (singleton, m. ejerandele), `loans` (m. hæftelse,
+`restgaeld` + `restgaeld_dato` = peildato for saldoen, og `startdato` = hvornår lånet blev
+optaget), `leases` (liste af
 lejekontrakter, hver m. startdato/slutdato — én aktiv pr. år via `leaseForAar`),
 `years` (pr. år med `budget`=forskud og `faktisk`=selvangivelse), `bilag`
 (m. filsti på disk), `settings`, `field_mappings`. (Ældre DB'er med `lease`-singleton
@@ -123,11 +124,17 @@ måneder), `renteudgifter` (pr. lån), `udlejet_andel_pct`, `naertstaaende`.
   pr. år (ikke lejeskift midt i et skatteår).
 - **Restgæld er et øjebliksbillede, ikke stamdata:** den falder for hvert afdrag. Lånet har
   derfor en eksplicit `restgaeld_dato` (peildato, default seneste årsskifte), ikke en hardkodet
-  31/12. Bruges kun som prefill-skøn til renten (`estimeretAarligRente`).
+  31/12. Bruges som prefill-skøn til renten (`renteskoen`), og ligger peildatoen mere end et
+  halvt år uden for året, advares der — saldoen fremskrives ikke (ADR-0007).
+- **Lånets `startdato` skærer renteskønnet til:** skønnet er restgæld × rente × den del af
+  året lånet løb, talt i faktiske kalenderdage / årets faktiske længde (365/366) — ikke
+  30/360 og ikke pro rata-måneder, se ADR-0007. Mangler startdatoen, dækker skønnet hele
+  året, markeret på skærmen. Et år før startdatoen giver intet skøn.
 - **Pro rata er forholdsmæssig efter dage** (dansk lejeret): delmåned tæller forholdsmæssigt
   (5.–31. aug = 27/31), ikke som hel måned.
 - **Beløb tastes med dansk decimalkomma** (1250,50). Talfelter holder rå tekst under redigering.
-- **Renter prefiller fra lån** (restgæld × rente) på nye år / via knap.
+- **Renter prefiller fra lån** (`renteskoen`) på nye år / via knap. Et beløb brugeren selv
+  har tastet overskrives aldrig af et skøn.
 
 ## Arbejdsmåde brugeren værdsætter
 

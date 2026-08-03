@@ -5,11 +5,25 @@ import { NumberField, TextField } from './fields.jsx'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling, gruppeOpgoerelse,
-  udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
+  udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, renteskoen,
   prorataMaaneder, aarsgrundlag, periodeAfvigelse, periodeKvittering, manglerPeriode,
   udlejetAndel, aarsinterval, maaAarOprettes,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
+
+// Lånets navn på skærmen: långiveren, ellers typen. Ét sted, så rentefeltet og
+// advarslen om samme lån ikke kan komme til at kalde det to ting.
+const laanNavn = (laan) => laan.laangiver || (laan.type === 'realkredit' ? 'Realkreditlån' : 'Banklån')
+
+// Hintet under rentefeltet: skønnet OG hvad det bygger på. Et skøn der er skåret ned
+// til en del af året skal kunne ses at være det — ellers ligner et halvt års rente
+// bare et forkert tal. Skønnet erstattes fortsat af bankens faktiske rentetal.
+function skoenHint(s, aar) {
+  if (s.foerOptagelse) return `lånet var ikke optaget i ${aar} — intet skøn`
+  if (s.manglerStartdato) return `skøn fra lån: ${kr(s.beloeb)} (hele året — lånets startdato mangler)`
+  if (s.dage < s.dageIAar) return `skøn fra lån: ${kr(s.beloeb)} (${s.dage} af årets ${s.dageIAar} dage)`
+  return `skøn fra lån: ${kr(s.beloeb)}`
+}
 
 export default function AaretsTal({ years, persons, property, loans, leases, settings, reload }) {
   const sorterede = [...years].sort((a, b) => b.aar - a.aar)
@@ -384,6 +398,9 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
   const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
   const pmdr = prorataMaaneder(saet)
   const afvigelse = periodeAfvigelse(saet, grundlag)
+  // Renteskønnet gøres op ÉN gang pr. lån og genbruges af knappen, hintet og advarslen,
+  // så de tre ikke kan komme til at bygge på hver sit opslag.
+  const skoen = loans.map(laan => ({ laan, s: renteskoen(laan, grundlag.aar) }))
 
   return (
     <>
@@ -543,24 +560,37 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
             <h2>Renteudgifter</h2>
             <h3>Personlige renteudgifter (kapitalindkomst) — fordeles efter hæftelse, ikke en del af udlejningsresultatet.</h3>
           </div>
+          {/* Knappen er den ENE vej et skøn kan lande i feltet, og den er brugerens eget
+              klik. Skønnet skrives aldrig af sig selv oven i et tal der står. */}
           {loans.length > 0 && (
-            <button className="btn ghost" onClick={() => loans.forEach(l => setRente(l.id, estimeretAarligRente(l)))}>
+            <button className="btn ghost" onClick={() => skoen.forEach(({ laan, s }) => setRente(laan.id, s.beloeb))}>
               ↻ Beregn fra stamdata
             </button>
           )}
         </div>
         {loans.length === 0 && <p className="muted">Tilføj lån under Stamdata for at indtaste renter.</p>}
         <div className="grid">
-          {loans.map(l => (
+          {skoen.map(({ laan, s }) => (
             <NumberField
-              key={l.id}
-              label={l.laangiver || (l.type === 'realkredit' ? 'Realkreditlån' : 'Banklån')}
-              hint={`skøn fra lån: ${kr(estimeretAarligRente(l))}`}
-              value={saet.renteudgifter[l.id] || ''}
-              onChange={v => setRente(l.id, v)}
+              key={laan.id}
+              label={laanNavn(laan)}
+              hint={skoenHint(s, grundlag.aar)}
+              value={saet.renteudgifter[laan.id] || ''}
+              onChange={v => setRente(laan.id, v)}
             />
           ))}
         </div>
+        {/* Peildato-advarslen: restgælden er målt langt fra året, så skønnet er svagt.
+            Den står her, hvor skønnet bruges — Lån-fanen kender ikke noget år.
+            Baggrunden er --surface-2, som findes i begge temaer. */}
+        {skoen.filter(({ s }) => s.peildatoAdvarsel).map(({ laan, s }) => (
+          <div key={laan.id} style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+            <p style={{ margin: 0 }}>
+              <span className="badge warn">Svagt renteskøn — {laanNavn(laan)}</span>
+            </p>
+            <p className="muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>{s.peildatoAdvarsel}</p>
+          </div>
+        ))}
         {loans.length > 0 && <p className="muted" style={{ marginTop: 10 }}>Renter i alt: <strong>{kr(sumRenter(saet))}</strong></p>}
       </div>
 

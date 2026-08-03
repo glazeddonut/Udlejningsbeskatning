@@ -154,6 +154,10 @@ export function validerEjendom(ejendom) {
 // en andel af noget, og negative satser har været en realitet. Restgælden har en
 // peildato — den er en saldo målt på en dag, ikke stamdata (CONTEXT.md) — og en
 // peildato der ikke er en dato gør saldoen umulig at datere.
+//
+// Startdatoen — hvornår lånet blev optaget — styrer renteskønnet i optagelsesåret
+// (renteskoen). En startdato der ikke er en dato ville blive læst som ingen startdato
+// og dermed tavst give et helt års rente på et lån der kun løb en del af året.
 export function validerLaan(laan) {
   if (laan === null || laan === undefined) return ja
   if (!erObjekt(laan)) return nej(tjekObjekt(laan, 'lånet'))
@@ -161,6 +165,7 @@ export function validerLaan(laan) {
     tjekTal(laan.hovedstol, 'hovedstolen'),
     tjekTal(laan.restgaeld, 'restgælden'),
     tjekDato(laan.restgaeld_dato, 'restgældens peildato'),
+    tjekDato(laan.startdato, 'lånets startdato'),
     tjekTal(laan.rente_pct, 'renten'),
     tjekAndele(laan.haeftelse, 'hæftelsen'),
   )

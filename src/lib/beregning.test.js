@@ -8,6 +8,7 @@ import {
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
   aarsgrundlag, periodeAfvigelse, periodeKvittering, gruppeOpgoerelse, manglerPeriode,
   udlejetAndel, fradragsBeloeb, aarsinterval, maaAarOprettes, prefillSaet, saetTilNytAar,
+  renteskoen,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -930,4 +931,121 @@ test('saetTilNytAar: en indsendt periode overstyres ikke', () => {
 test('aarsgrundlag bærer selv sit år, så en flade ikke skal have det ved siden af', () => {
   assert.equal(aarsgrundlag([{ id: 1, startdato: '2026-01-01' }], 2026).aar, 2026)
   assert.equal(aarsgrundlag([], 2028).aar, 2028)
+})
+
+// ── Renteskønnet: lånets startdato gør skønnet årsafhængigt ────────────────────
+//
+// Skønnet var før årsuafhængigt: et lån optaget i august fik et helt års rente
+// foreslået på optagelsesåret. Restgæld × rente er stadig svaret på "hvad koster
+// lånet på et helt år" (estimeretAarligRente) — renteskoen svarer på hvad det kostede
+// i ét bestemt år.
+
+test('renteskoen: et lån der løb hele året giver det uforkortede årsskøn', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2024-06-01', restgaeld_dato: '2025-06-30' }
+  const s = renteskoen(laan, 2025)
+  assert.equal(s.beloeb, 45000)
+  assert.equal(s.beloeb, estimeretAarligRente(laan))   // uændret i forhold til før startdatoen
+  assert.equal(s.dage, 365)
+})
+
+// Den observerede fejl: lånet på 1.500.000 kr. til 3 % blev prefillet med 45.000 kr. på
+// 2025, hvor det først blev optaget omkring 9. august. Brugeren rettede i hånden til
+// 17.849 kr. — omtrent 145 dages rente.
+test('renteskoen: et lån optaget midt i året skæres til den del af året det løb', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
+  const s = renteskoen(laan, 2025)
+  assert.equal(s.dage, 145)        // 9. aug–31. dec, faktiske kalenderdage inkl. startdagen
+  assert.equal(s.dageIAar, 365)
+  assert.equal(s.beloeb, 17877)    // 45.000 × 145/365 — tæt på brugerens egne 17.849
+  assert.equal(s.helAar, 45000)    // det uforkortede årsskøn står stadig
+})
+
+test('renteskoen: et skudår måles mod sine egne 366 dage', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2020-01-01' }
+  assert.equal(renteskoen(laan, 2028).dage, 366)
+  assert.equal(renteskoen(laan, 2028).beloeb, 45000)   // hele året → uforkortet
+})
+
+test('renteskoen: et år før lånets startdato giver intet skøn', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
+  const s = renteskoen(laan, 2024)
+  assert.equal(s.beloeb, 0)
+  assert.equal(s.dage, 0)
+  assert.equal(s.foerOptagelse, true)
+  assert.equal(renteskoen(laan, 2025).foerOptagelse, false)
+  // Optages lånet på årets sidste dag, er der én dags rente — ikke ingen
+  assert.equal(renteskoen({ ...laan, startdato: '2025-12-31' }, 2025).dage, 1)
+  assert.equal(renteskoen({ ...laan, startdato: '2025-12-31' }, 2025).foerOptagelse, false)
+})
+
+// Valget ved manglende startdato: HELE året, markeret. ADR-0002 gætter ikke en
+// manglende udlejningsperiode, men det er et dagstal der INDBERETTES, og 0 er der det
+// ærlige svar. Her er svaret et beløb: et skøn på 0 ville se ud som "ingen rente" —
+// et forkert tal der ser legitimt ud — mens et helt års rente er præcis det feltet
+// spørger om. De lån der allerede står i DB'en har ingen startdato og skal give samme
+// skøn som før.
+test('renteskoen: uden startdato dækker skønnet hele året — og siger det', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3 }
+  const s = renteskoen(laan, 2025)
+  assert.equal(s.beloeb, 45000)
+  assert.equal(s.dage, 365)
+  assert.equal(s.manglerStartdato, true)
+  assert.equal(s.foerOptagelse, false)
+  // En startdato der ikke er en dato er lige så uoplyst som ingen startdato
+  assert.equal(renteskoen({ ...laan, startdato: '9/8-2025' }, 2025).manglerStartdato, true)
+  assert.equal(renteskoen({ ...laan, startdato: '9/8-2025' }, 2025).beloeb, 45000)
+  assert.equal(renteskoen({ ...laan, startdato: '2025-08-09' }, 2025).manglerStartdato, false)
+})
+
+// Peildatoen begynder at gøre noget. Den blev indført for at fjerne den hardkodede
+// 31/12-antagelse, men skønnet læste den ikke — og en saldo målt 31.12.2026 gav
+// 45.000 kr. som skøn for 2025. Der fremskrives stadig ingen saldo; der advares.
+test('renteskoen: peildatoen advarer når saldoen er målt langt fra året', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09', restgaeld_dato: '2026-12-31' }
+  // Præcis den DB der gav 45.000 kr. for 2025: saldoen er målt efter årets udgang
+  assert.match(renteskoen(laan, 2025).peildatoAdvarsel, /2026-12-31/)
+  // Bankens opgørelse pr. seneste årsskifte er det bedste der findes — ingen advarsel
+  assert.equal(renteskoen({ ...laan, restgaeld_dato: '2024-12-31' }, 2025).peildatoAdvarsel, '')
+  // En saldo målt inde i selve året er heller ikke langt fra
+  assert.equal(renteskoen({ ...laan, restgaeld_dato: '2025-09-30' }, 2025).peildatoAdvarsel, '')
+  // Langt FØR året: saldoen er forældet, lånet er afdraget siden
+  assert.match(renteskoen({ ...laan, restgaeld_dato: '2023-12-31' }, 2025).peildatoAdvarsel, /2023-12-31/)
+  // En uoplyst peildato er ikke en fejl — der advares kun om en saldo der ER dateret
+  assert.equal(renteskoen({ ...laan, restgaeld_dato: '' }, 2025).peildatoAdvarsel, '')
+  // Uden et skøn er der intet at advare om
+  assert.equal(renteskoen(laan, 2024).peildatoAdvarsel, '')
+})
+
+// Grænsen er symmetrisk: en saldo målt lige EFTER året er lige så tæt på årets egen som
+// en målt lige før. En bankopgørelse dateret 2. januar er ikke "langt fra" året før.
+test('renteskoen: peildato-tolerancen er et halvt år til begge sider', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3 }
+  const advarer = (dato, aar) => !!renteskoen({ ...laan, restgaeld_dato: dato }, aar).peildatoAdvarsel
+  assert.equal(advarer('2026-01-02', 2025), false)   // 1 dag efter året — bankens nytårsopgørelse
+  assert.equal(advarer('2026-07-02', 2025), false)   // 183 dage efter — netop inden for
+  assert.equal(advarer('2026-07-03', 2025), true)    // 184 dage efter — uden for
+  assert.equal(advarer('2024-07-02', 2025), false)   // 183 dage før — netop inden for
+  assert.equal(advarer('2024-07-01', 2025), true)    // 184 dage før — uden for
+})
+
+test('prefillSaet: et nyt år fødes med ÅRETS renteskøn, ikke et helt års', () => {
+  const laan = [{ id: 1, restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }]
+  const kontrakt2025 = [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31', maanedlig_leje: 4500 }]
+  const kontrakt2026 = [{ id: 2, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  assert.equal(prefillSaet({ leases: kontrakt2025, loans: laan, aar: 2025 }).renteudgifter[1], 17877)
+  assert.equal(prefillSaet({ leases: kontrakt2026, loans: laan, aar: 2026 }).renteudgifter[1], 45000)
+})
+
+test('saetTilNytAar: en indtastet rente overskrives aldrig af et skøn', () => {
+  const laan = [{ id: 1, restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }]
+  const kontekst = { leases: [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' }], loans: laan, aar: 2025 }
+  const eget = saetTilNytAar(kontekst, { renteudgifter: { 1: 17849 } })
+  assert.equal(eget.renteudgifter[1], 17849)   // brugerens eget tal fra banken står
+})
+
+// Et årstal kan komme som tekst. `'2025' + 1` er "20251", så et årsskøn ville ellers
+// blive regnet på år 20251 — tavst forkert i et felt der ender på selvangivelsen.
+test('renteskoen: et årstal som tekst regnes som det år det er', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
+  assert.deepEqual(renteskoen(laan, '2025'), renteskoen(laan, 2025))
 })
