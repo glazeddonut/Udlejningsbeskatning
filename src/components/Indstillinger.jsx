@@ -14,7 +14,13 @@ export default function Indstillinger({ settings, fieldMappings, years, reload }
   const [s, setS] = useState(settings)
   const [dirty, setDirty] = useState(false)
   const upd = (patch) => { setS({ ...s, ...patch }); setDirty(true) }
-  const gem = async () => { await api.put('/settings', s); setDirty(false); reload() }
+  const [fejl, setFejl] = useState('')
+  // Markedsleje-advarslen er en procent, og feltmapping-året et årstal. Afviser
+  // serveren dem, skal det ses frem for at knappen bare ikke gør noget.
+  const gem = async () => {
+    try { await api.put('/settings', s) } catch (e) { setFejl(e.message); return }
+    setFejl(''); setDirty(false); reload()
+  }
 
   return (
     <>
@@ -33,6 +39,7 @@ export default function Indstillinger({ settings, fieldMappings, years, reload }
         </div>
         <div style={{ marginTop: 12 }}>
           <button className="btn primary" onClick={gem} disabled={!dirty}>Gem indstillinger</button>
+          {fejl && <span className="badge warn" style={{ marginLeft: 8 }}>{fejl}</span>}
         </div>
       </div>
 

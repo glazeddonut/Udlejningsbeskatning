@@ -28,10 +28,16 @@ function standardAndele(persons) {
 export default function EjendomStamdata({ property, persons, reload }) {
   const [e, setE] = useState(property || tomEjendom(persons))
   const [dirty, setDirty] = useState(false)
+  const [fejl, setFejl] = useState('')
   const upd = (patch) => { setE({ ...e, ...patch }); setDirty(true) }
   const updAndel = (pid, v) => { setE({ ...e, ejerandele: { ...e.ejerandele, [pid]: parseNum(v) } }); setDirty(true) }
 
-  const gem = async () => { await api.put('/property', e); setDirty(false); reload() }
+  // Afviser serveren tallene — fx en ejerandel over 100 % — skal det siges, ikke
+  // sluges: ellers ser en mislykket gemning ud som en gennemført.
+  const gem = async () => {
+    try { await api.put('/property', e) } catch (err) { setFejl(err.message); return }
+    setFejl(''); setDirty(false); reload()
+  }
 
   const andelSum = persons.reduce((s, p) => s + (Number(e.ejerandele?.[p.id]) || 0), 0)
   const andelOk = Math.abs(andelSum - 100) < 0.01 || persons.length === 0
@@ -80,6 +86,7 @@ export default function EjendomStamdata({ property, persons, reload }) {
 
       <div style={{ marginTop: 14 }}>
         <button className="btn primary" onClick={gem} disabled={!dirty}>Gem lejlighed</button>
+        {fejl && <span className="badge warn" style={{ marginLeft: 8 }}>{fejl}</span>}
       </div>
     </div>
   )

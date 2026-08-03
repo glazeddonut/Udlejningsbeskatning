@@ -20,6 +20,7 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
   const [visOpret, setVisOpret] = useState(false)
   const [nyAar, setNyAar] = useState('')
   const [opretFejl, setOpretFejl] = useState('')
+  const [gemFejl, setGemFejl] = useState('')
 
   // Synkronisér lokalt år når valg eller data ændrer sig.
   useEffect(() => {
@@ -78,6 +79,7 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
       return { ...prev, [mode]: saet }
     })
     setDirty(true)
+    setGemFejl('')   // brugeren er i gang med at rette — den gamle afvisning gælder ikke
   }
   // Sæt begge datoer på én gang — til "brug lejekontraktens periode".
   const setPeriode = (fra, til) => {
@@ -107,8 +109,17 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     setDirty(true)
   }
 
+  // Serveren afviser tal og datoer der ikke har domænets form — fx en udlejet andel
+  // over 100 %. Afvisningen skal SES: uden den ville knappen bare lade som ingenting,
+  // og året stå ugemt uden at nogen sagde det.
   const gem = async () => {
-    await api.put(`/years/${year.id}`, { aar: year.aar, budget: year.budget, faktisk: year.faktisk })
+    try {
+      await api.put(`/years/${year.id}`, { aar: year.aar, budget: year.budget, faktisk: year.faktisk })
+    } catch (e) {
+      setGemFejl(e.message)
+      return
+    }
+    setGemFejl('')
     setDirty(false)
     reload()
   }
@@ -188,6 +199,7 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
       {year && (
         <div className="card" style={{ display: 'flex', gap: 8 }}>
           <button className="btn primary" onClick={gem} disabled={!dirty}>Gem år</button>
+          {gemFejl && <span className="badge warn" style={{ alignSelf: 'center' }}>{gemFejl}</span>}
           <button className="btn danger" onClick={sletAar} style={{ marginLeft: 'auto' }}>Slet år</button>
         </div>
       )}

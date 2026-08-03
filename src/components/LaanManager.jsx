@@ -93,6 +93,13 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
   })
   const upd = (patch) => setL({ ...l, ...patch })
   const updHaefte = (pid, v) => setL({ ...l, haeftelse: { ...l.haeftelse, [pid]: parseNum(v) } })
+  // Serveren afviser et beløb der ikke er et tal, en peildato der ikke er en dato og
+  // en hæftelse uden for 0–100 %. Fejlen vises her frem for at gemningen tavst svigter.
+  const [fejl, setFejl] = useState('')
+  const gem = async () => {
+    try { await onSave(l) } catch (e) { setFejl(e.message); return }
+    setFejl('')
+  }
   const haefteSum = persons.reduce((s, p) => s + (Number(l.haeftelse?.[p.id]) || 0), 0)
   const haefteOk = Math.abs(haefteSum - 100) < 0.01 || persons.length === 0
 
@@ -118,8 +125,9 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
       </div>
 
       <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
-        <button className="btn primary" onClick={() => onSave(l)}>Gem lån</button>
+        <button className="btn primary" onClick={gem}>Gem lån</button>
         <button className="btn ghost" onClick={onCancel}>Annullér</button>
+        {fejl && <span className="badge warn" style={{ alignSelf: 'center' }}>{fejl}</span>}
         {onDelete && <button className="btn danger" onClick={onDelete} style={{ marginLeft: 'auto' }}>Slet</button>}
       </div>
     </div>

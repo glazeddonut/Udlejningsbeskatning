@@ -80,6 +80,13 @@ function LejeForm({ initial, onSave, onCancel, onDelete }) {
   const [l, setL] = useState(initial || tomLejekontrakt())
   const upd = (patch) => setL({ ...l, ...patch })
   const updForbrug = (key, v) => setL({ ...l, forbrug_aconto: { ...l.forbrug_aconto, [key]: parseNum(v) } })
+  // Afviser serveren datoerne eller beløbene, siges det her — en gemning der ikke
+  // lykkedes må ikke se ud som en der gjorde.
+  const [fejl, setFejl] = useState('')
+  const gem = async () => {
+    try { await onSave(l) } catch (e) { setFejl(e.message); return }
+    setFejl('')
+  }
 
   const aarsleje = (Number(l.maanedlig_leje) || 0) * 12
   const markedsAarsleje = (Number(l.markedsleje_maanedlig_skoen) || 0) * 12
@@ -105,8 +112,9 @@ function LejeForm({ initial, onSave, onCancel, onDelete }) {
       </p>
 
       <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-        <button className="btn primary" onClick={() => onSave(l)}>Gem lejekontrakt</button>
+        <button className="btn primary" onClick={gem}>Gem lejekontrakt</button>
         <button className="btn ghost" onClick={onCancel}>Annullér</button>
+        {fejl && <span className="badge warn" style={{ alignSelf: 'center' }}>{fejl}</span>}
         {onDelete && <button className="btn danger" onClick={onDelete} style={{ marginLeft: 'auto' }}>Slet</button>}
       </div>
     </div>
