@@ -45,6 +45,10 @@ Overblik · Stamdata · Årets tal · Skatteindberetning · Bilag · Årsregnska
 - **Renter er ikke en del af udlejningsresultatet** — personlige renteudgifter, vises separat.
 - **Forbedringer er ikke fradrag** (tillægges anskaffelsessum); kun vedligeholdelse er fradrag.
 - **Markedsleje:** lejen skal svare til markedslejen; ellers gaveelement (Overblik advarer).
+- **Udlejet andel (`udlejet_andel_pct`) rammer KUN ejendomsposter** — grundskyld, fællesudgifter,
+  forsikring, renovation (flaget `ejendomspost` i `kontoplan.js`). Indtægter og poster der
+  udelukkende vedrører det udlejede (vedligeholdelse, administration) røres aldrig. Samme andel
+  indberettes til skat.dk (felt 744) og regnes fradrag på. Se ADR-0003 og `fradragsBeloeb`.
 
 ## Skat.dk-felter = højeste risikopunkt
 

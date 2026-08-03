@@ -32,7 +32,7 @@
 import { normaliserSaet } from './saet.js'
 import { bilagForAar, bilagPost, bilagssummer, migrerBilag } from './bilag.js'
 import { KONTOPLAN } from './kontoplan.js'
-import { kr, kr2, oere } from './format.js'
+import { kr, kr2, oere, pct } from './format.js'
 import {
   gruppeOpgoerelse, resultatFoerRenter, sumRenter,
   personOpgoerelse, resolveFordeling,
@@ -76,20 +76,48 @@ const BILAGSKOLONNER = Object.freeze([
 ])
 
 // Én række i en sektion. `sum` markerer totalrækken, `hjemloes` en post kontoplanen
-// ikke kender (ADR-0001), `prorata` at beløbet er ganget op fra et månedsbeløb.
-const raekke = (id, label, beloeb, { sum = false, hjemloes = false, prorata = false } = {}) =>
-  ({ id, label, beloeb, vaerdi: kr(beloeb), sum, hjemloes, prorata })
+// ikke kender (ADR-0001), `prorata` at beløbet er ganget op fra et månedsbeløb, og
+// `andel` at beløbet er skrevet ned med den udlejede andel (ADR-0003).
+const raekke = (id, label, beloeb, { sum = false, hjemloes = false, prorata = false, andel = false, beloebFoerAndel = beloeb } = {}) =>
+  ({ id, label, beloeb, beloebFoerAndel, vaerdi: kr(beloeb), sum, hjemloes, prorata, andel })
+
+// Rækkens navn når den udlejede andel har skrevet beløbet ned. Forklaringen står i
+// LABELLEN og ikke i en ekstra kolonne, fordi labellen er den ene kanal både skærmen og
+// PDF'en skriver — de to kan derfor ikke komme til at forklare det samme tal hver sin
+// måde. Uden nedskrivning er navnet kontoplanens label, ordret som før.
+const andelsLabel = (linje, andelPct) =>
+  `${linje.label} — ${pct(andelPct)} af ${kr(linje.beloebFoerAndel)}`
 
 // Rækkerne for én af kontoplanens grupper. Poster uden beløb udelades — de fylder
 // kun regnskabet. Hjemløse poster vises altid, også med nul: nøglen er selv den
 // oplysning brugeren skal se.
+//
+// En ejendomspost der er skrevet HELT ned (0 % udlejet) beholder derimod sin række.
+// Filteret spørger derfor til det AFHOLDTE beløb, ikke til fradraget: et fradrag der
+// forsvinder sporløst er præcis den black box andelen ikke må være. Ved fuld udlejning
+// er de to tal ens, og filteret opfører sig præcis som før.
 function gruppeRaekker(opg) {
   return [
-    ...opg.poster.filter(p => p.beloeb !== 0)
-      .map(p => raekke(p.id, p.label, p.beloeb, { prorata: p.prorata })),
+    ...opg.poster.filter(p => p.beloebFoerAndel !== 0)
+      .map(p => raekke(p.id, p.andel ? andelsLabel(p, opg.andelPct) : p.label, p.beloeb,
+        { prorata: p.prorata, andel: p.andel, beloebFoerAndel: p.beloebFoerAndel })),
     ...opg.hjemloese
       .map(p => raekke(p.id, `${p.noegle} (hjemløs post)`, p.beloeb, { hjemloes: true, prorata: p.prorata })),
   ]
+}
+
+// Udgiftssektionens forklaring: hvilke poster andelen rammer, sagt med posternes egne
+// navne. Uden den ville en bruger se to nedskrevne tal uden at kunne se hvorfor netop
+// de to. Tom ved fuld udlejning — der er intet at forklare, og regnskabet skal være
+// ordret som før. Hvilke poster der er ramt, spørges der ikke om her: linjen bærer selv
+// svaret (`andel`), så forklaringen ikke kan komme til at nævne andre poster end dem
+// rækkerne rent faktisk har skrevet ned.
+function andelsForklaring(udg) {
+  const ramte = udg.poster.filter(p => p.andel).map(p => p.label)
+  if (!ramte.length) return ''
+  return `Den udlejede andel er ${pct(udg.andelPct)}. Ejendomsposter vedrører hele ejendommen og er `
+    + `kun fradragsberettigede med den andel: ${ramte.join(', ')}. `
+    + 'Øvrige udgifter vedrører udelukkende det udlejede og indgår fuldt ud.'
 }
 
 const AFSTEMNINGSKOLONNER = Object.freeze([
@@ -113,9 +141,15 @@ const AFSTEMNINGSFORKLARING =
 // næsten alt, og en advarsel der altid lyser, læres der at ignorere.
 //
 // Det indtastede beløb er det EFFEKTIVE årsbeløb — efter pro rata, ikke det rå
-// månedsbeløb. Det er det tal regnskabet viser, og derfor det tal der skal afstemmes.
-// For de summerbare poster tages tallet direkte fra gruppeopgørelserne, så rækken her
-// og rækken i indtægts-/udgiftssektionen ikke kan komme til at vise hvert sit beløb.
+// månedsbeløb. For de summerbare poster tages tallet direkte fra gruppeopgørelserne, så
+// rækken her og rækken i indtægts-/udgiftssektionen bygger på samme optælling.
+//
+// Men det er beløbet FØR den udlejede andel. Andelen er en fradragsbegrænsning, ikke et
+// andet betalt beløb: bilaget dokumenterer hvad der ER afholdt, og afstemningen er en
+// kontrol af indtastningen mod bilagene (ADR-0005). Afstemtes der mod det nedskrevne
+// fradrag, ville hver eneste ejendomspost lyse "difference" for evigt ved delvis
+// udlejning — og en advarsel der altid lyser, lærer man at ignorere. Ved fuld udlejning
+// er de to tal ens, så afstemningen er uændret for de faktiske data.
 //
 // De to ikke-summerbare poster er med: et bilag skal kunne dokumentere alt hvad der er
 // betalt. Deres beløb ligger på GRUPPEniveau i talsættet (`saet.forbedringer` er en
@@ -141,7 +175,7 @@ function byggAfstemning({ sum, aaretsBilag, indt, udg }) {
 
   const { perPost, ukendte } = bilagssummer(aaretsBilag)
   const indtastet = new Map([
-    ...[...indt.poster, ...udg.poster].map(l => [l.id, l.beloeb]),
+    ...[...indt.poster, ...udg.poster].map(l => [l.id, l.beloebFoerAndel]),
     ['renteudgifter.renteudgifter', sum.renter],
     ['forbedringer.forbedringer', sum.forbedringer],
   ])
@@ -203,29 +237,38 @@ function byggOpstilling({ aar, grundlag, saet, dagstal, periode, afvigelse, sum,
   const ejere = 'Ejere: ' + (persons || []).map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' · ')
   // Uden udlejningsperiode skriver hovedet flaget frem for et tal (ADR-0002). "0
   // udlejningsdage" ville være et lige så tavst svar som det 360 vi lige har fjernet.
+  // Andelen står i hovedet SAMMEN med de øvrige indberetningstal — det er den samme
+  // andel der indberettes til skat.dk (felt 744) og regnes fradrag på (ADR-0003). Ved
+  // fuld udlejning nævnes den ikke: der er ingen begrænsning at oplyse om, og hovedet
+  // skal være ordret som før.
   const meta = `Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'}`
     + ` · Udlejet til nærtstående: ${saet.naertstaaende ? 'ja' : 'nej'}`
     + (periode.mangler ? ' · udlejningsperiode mangler' : ` · ${dagstal.udlejningsdage} udlejningsdage`)
+    + (udg.andelPct === 100 ? '' : ` · Udlejet andel: ${pct(udg.andelPct)}`)
 
   const sektioner = [
     {
       id: 'indtaegter',
       titel: 'Indtægter',
+      forklaring: '',
       raekker: [...gruppeRaekker(indt), raekke('indtaegter.sum', 'Indtægter i alt', indt.sum, { sum: true })],
     },
     {
       id: 'udgifter',
       titel: 'Fradragsberettigede udgifter',
+      forklaring: andelsForklaring(udg),
       raekker: [...gruppeRaekker(udg), raekke('udgifter.sum', 'Udgifter i alt', udg.sum, { sum: true })],
     },
     {
       id: 'resultat',
       titel: 'Resultat',
+      forklaring: '',
       raekker: [raekke('resultat.udlejningsresultat', 'Udlejningsresultat før renter', sum.udlejningsresultat, { sum: true })],
     },
     {
       id: 'fordeling',
       titel: 'Fordeling pr. ejer',
+      forklaring: '',
       raekker: [
         ...personer.map(o => raekke(
           `fordeling.${o.personId}`,
@@ -243,6 +286,7 @@ function byggOpstilling({ aar, grundlag, saet, dagstal, periode, afvigelse, sum,
     sektioner.push({
       id: 'forbedringer',
       titel: 'Forbedringer (ikke fradrag)',
+      forklaring: '',
       raekker: [raekke('forbedringer', 'Forbedringer i året — tillægges anskaffelsessummen', sum.forbedringer)],
     })
   }

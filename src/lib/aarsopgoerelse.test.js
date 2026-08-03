@@ -256,6 +256,116 @@ test('kendte poster er ikke hjemløse, heller ikke når samme nøgle findes i be
   assert.equal(o.opstilling.sektioner.flatMap(s => s.raekker).some(r => r.hjemloes), false)
 })
 
+// ── Den udlejede andel (ADR-0003) ─────────────────────────────────────────────
+//
+// Andelen indberettes til skat.dk (felt 744) og er fra nu af også den andel fradraget
+// er REGNET på. Den rammer kun ejendomsposter — hele ejendommens omkostninger — aldrig
+// indtægter og aldrig poster der udelukkende vedrører det udlejede.
+
+const medAndel = (pct) => kald({ years: [{ id: 8, aar: 2025, budget: raatSaet({ udlejet_andel_pct: pct }), faktisk: raatSaet({ udlejet_andel_pct: pct }) }] })
+
+test('fuld udlejning: opstillingen er tal for tal og ord for ord den samme som uden andelen', () => {
+  const uden = kald({ years: [{ id: 8, aar: 2025, budget: raatSaet({ udlejet_andel_pct: undefined }), faktisk: raatSaet({ udlejet_andel_pct: undefined }) }] })
+  assert.deepEqual(medAndel(100).opstilling, uden.opstilling)
+  assert.deepEqual(medAndel(100).sum, uden.sum)
+})
+
+test('en delvis andel skærer kun ejendomsposternes rækker ned', () => {
+  const o = medAndel(60)
+  assert.equal(raekke(o, 'udgifter', 'udgifter.grundskyld').beloeb, 3120 * 0.6)          // 1.872
+  assert.equal(raekke(o, 'udgifter', 'udgifter.faellesudgifter').beloeb, 13250 * 0.6)    // 7.950
+  assert.equal(raekke(o, 'udgifter', 'udgifter.vedligeholdelse').beloeb, 5211)           // kun det udlejede
+  assert.equal(raekke(o, 'udgifter', 'udgifter.andet').beloeb, 2695)
+  assert.equal(o.sum.udgifter, 24276 - (3120 + 13250) * 0.4)                             // 17.728
+  assert.equal(o.sum.indtaegter, 24678)                                                  // uændret
+  assert.equal(o.sum.udlejningsresultat, 24678 - 17728)
+})
+
+test('indtægtssektionen er upåvirket af enhver andel — lejen er den leje der er modtaget', () => {
+  const fuld = medAndel(100)
+  for (const pct of [0, 33, 60, 99]) {
+    assert.deepEqual(
+      sektion(medAndel(pct), 'indtaegter').raekker.map(r => [r.id, r.beloeb]),
+      sektion(fuld, 'indtaegter').raekker.map(r => [r.id, r.beloeb]),
+      `andel ${pct}`,
+    )
+  }
+})
+
+test('rækkerne summer stadig til sektionens sumrække ved en delvis andel', () => {
+  for (const s of medAndel(60).opstilling.sektioner) {
+    if (s.id !== 'indtaegter' && s.id !== 'udgifter') continue
+    const poster = s.raekker.filter(r => !r.sum).reduce((n, r) => n + r.beloeb, 0)
+    assert.equal(poster, s.raekker.find(r => r.sum).beloeb, `${s.id} summer ikke`)
+  }
+})
+
+// ADR-0001 gælder det brugeren SER, ikke kun tallene bag. Rækkerne skrives med kr() uden
+// decimaler, så en andel der efterlod ører ville give et regnskab hvor de viste rækker
+// ikke kunne lægges sammen til den viste total: 60 % af 3.121 er 1.872,60 og står som
+// "1.873", men ville tælle 1.872,60 med i summen.
+test('de VISTE rækker summer til den viste total, også ved en skæv andel', () => {
+  const s = raatSaet({
+    udlejet_andel_pct: 60,
+    udgifter: { grundskyld: 3121, faellesudgifter: 13251, vedligeholdelse: 5211, andet: 2695 },
+  })
+  const o = kald({ years: [{ id: 8, aar: 2025, budget: s, faktisk: s }] })
+  const sek = sektion(o, 'udgifter')
+  const somTal = (v) => Number(v.replace(/[^\d-]/g, ''))   // "1.873 kr." → 1873
+  const visteTal = sek.raekker.filter(r => !r.sum).map(r => somTal(r.vaerdi))
+  const visttotal = somTal(sek.raekker.find(r => r.sum).vaerdi)
+  assert.equal(visteTal.reduce((a, b) => a + b, 0), visttotal)
+  assert.deepEqual(visteTal, [1873, 7951, 5211, 2695])           // 60 % af 3.121 / 13.251
+  assert.equal(visttotal, 17730)
+})
+
+// Beregningen må ikke være en black box: rækken skal selv sige HVOR meget der er skåret
+// fra og af hvilket beløb. Teksten står i labellen, fordi det er den kanal både skærmen
+// og PDF'en skriver — de to må ikke kunne vise hver sin forklaring.
+test('en nedskrevet række siger selv at den er nedskrevet, og af hvilket beløb', () => {
+  const r = raekke(medAndel(60), 'udgifter', 'udgifter.grundskyld')
+  assert.equal(r.label, 'Grundskyld (ejendomsskat) — 60 % af 3.120 kr.')
+  assert.equal(r.beloebFoerAndel, 3120)
+  assert.equal(r.andel, true)
+  assert.equal(raekke(medAndel(60), 'udgifter', 'udgifter.vedligeholdelse').label, 'Vedligeholdelse')
+  assert.equal(raekke(medAndel(60), 'udgifter', 'udgifter.vedligeholdelse').andel, false)
+})
+
+test('ved fuld udlejning står der ikke noget om andelen nogen steder', () => {
+  const o = medAndel(100)
+  assert.equal(raekke(o, 'udgifter', 'udgifter.grundskyld').label, 'Grundskyld (ejendomsskat)')
+  assert.equal(sektion(o, 'udgifter').forklaring, '')
+  assert.equal(o.opstilling.hoved.linjer[2].includes('andel'), false)
+})
+
+test('udgiftssektionen forklarer hvilke poster andelen rammer', () => {
+  const f = sektion(medAndel(60), 'udgifter').forklaring
+  assert.match(f, /60 %/)
+  assert.match(f, /Grundskyld \(ejendomsskat\), Fællesudgifter \(drift\)/)
+})
+
+test('hovedet skriver andelen, så den står sammen med de øvrige indberetningstal', () => {
+  assert.match(medAndel(60).opstilling.hoved.linjer[2], /· Udlejet andel: 60 %$/)
+})
+
+// En post der er skrevet HELT ned beholder sin række. Et fradrag der forsvinder sporløst
+// er præcis den black box ticketen skal væk fra — rækken skal kunne læses som "her stod
+// 3.120 kr., og andelen tog dem alle".
+test('0 % nulstiller ejendomsposternes fradrag og kun dem, men skjuler dem ikke', () => {
+  const o = medAndel(0)
+  const r = raekke(o, 'udgifter', 'udgifter.grundskyld')
+  assert.equal(r.beloeb, 0)
+  assert.equal(r.beloebFoerAndel, 3120)
+  assert.equal(r.label, 'Grundskyld (ejendomsskat) — 0 % af 3.120 kr.')
+  assert.equal(o.sum.udgifter, 5211 + 2695)
+  assert.equal(o.sum.indtaegter, 24678)
+  assert.match(o.opstilling.hoved.linjer[2], /· Udlejet andel: 0 %$/)
+})
+
+test('en ejendomspost uden beløb får stadig ingen række — den fylder kun regnskabet', () => {
+  assert.equal(raekke(medAndel(60), 'udgifter', 'udgifter.forsikring'), undefined)   // 0 kr. tastet
+})
+
 // ── Fordeling mellem ægtefæller (§25 A) ───────────────────────────────────────
 
 test('alt_paa_en: hele resultatet og alle renter hos den ægtefælle der driver udlejningen', () => {
@@ -474,6 +584,24 @@ test('en post uden bilag vises neutralt som "ingen bilag" — ikke som en fejl',
   assert.equal(r.celler.status, 'Ingen bilag')
   assert.equal(r.celler.bilagssum, '—')
   assert.equal(r.celler.difference, '—', 'uden bilag findes der ingen difference at vise')
+})
+
+// Den udlejede andel er en fradragsBEGRÆNSNING, ikke et andet betalt beløb. Bilaget
+// dokumenterer hvad der ER betalt, og afstemningen er en kontrol af INDTASTNINGEN mod
+// bilagene. Blev der afstemt mod det nedskrevne fradrag, ville hver eneste ejendomspost
+// lyse "difference" for evigt ved delvis udlejning — og en advarsel der altid lyser,
+// lærer man at ignorere.
+test('afstemningen holder bilagene op mod det afholdte beløb, ikke mod det nedskrevne fradrag', () => {
+  const s = raatSaet({ udlejet_andel_pct: 60 })
+  const o = kald({
+    years: [{ id: 8, aar: 2025, budget: s, faktisk: s }],
+    bilag: [bl(1, 2025, { post_id: 'udgifter.grundskyld', beloeb: 3120 })],
+  })
+  const r = afstRaekke(o, 'udgifter.grundskyld')
+  assert.equal(r.indtastet, 3120)                                // det afholdte, ikke 1.872
+  assert.equal(r.bilagssum, 3120)
+  assert.equal(r.status, 'stemmer')
+  assert.equal(raekke(o, 'udgifter', 'udgifter.grundskyld').beloeb, 1872)  // regnskabet viser fradraget
 })
 
 test('en post uden både beløb og bilag får ingen række — den fylder kun afstemningen', () => {

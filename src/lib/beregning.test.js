@@ -6,6 +6,7 @@ import {
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
   aarsgrundlag, periodeAfvigelse, periodeKvittering, gruppeOpgoerelse, manglerPeriode,
+  udlejetAndel, fradragsBeloeb,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -241,6 +242,223 @@ test('en hjemløs indtægt rapporteres på samme måde som en hjemløs udgift', 
   assert.deepEqual(gruppeOpgoerelse(saet, 'indtaegter').hjemloese.map(h => h.id), ['indtaegter.depositum'])
   assert.deepEqual(gruppeOpgoerelse(saet, 'udgifter').hjemloese.map(h => h.id), ['udgifter.ejerforening'])
   assert.equal(resultatFoerRenter(saet), 18000 - 1200)
+})
+
+// ── Den udlejede andel (ADR-0003) ─────────────────────────────────────────────
+
+test('udlejetAndel: fuld udlejning er default — et talsæt uden andelen er 100 %', () => {
+  assert.equal(udlejetAndel(tomtSaet()), 100)
+  assert.equal(udlejetAndel({}), 100)
+  assert.equal(udlejetAndel(null), 100)
+  assert.equal(udlejetAndel({ udlejet_andel_pct: '' }), 100)
+  assert.equal(udlejetAndel({ udlejet_andel_pct: 'noget vrøvl' }), 100)
+})
+
+test('udlejetAndel: 0 er en rigtig andel og bliver ikke lavet om til fuld udlejning', () => {
+  assert.equal(udlejetAndel({ udlejet_andel_pct: 0 }), 0)
+})
+
+test('udlejetAndel: en andel over 100 eller under 0 kan ikke forøge et fradrag', () => {
+  assert.equal(udlejetAndel({ udlejet_andel_pct: 150 }), 100)
+  assert.equal(udlejetAndel({ udlejet_andel_pct: -20 }), 0)
+})
+
+test('fradragsBeloeb: ved fuld udlejning er fradraget det effektive årsbeløb, krone for krone', () => {
+  const saet = eksempelSaet()                                    // udlejet_andel_pct = 100
+  for (const gruppe of ['indtaegter', 'udgifter']) {
+    for (const noegle of Object.keys(saet[gruppe])) {
+      assert.equal(fradragsBeloeb(saet, gruppe, noegle), effektivBeloeb(saet, gruppe, noegle), `${gruppe}.${noegle}`)
+    }
+  }
+})
+
+test('fradragsBeloeb: en delvis andel rammer ejendomsposterne — og kun dem', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 60 }
+  // Ejendomsposter: hele ejendommens omkostning, kun fradrag med den udlejede andel.
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld'), 4493)               // 60 % af 7.488
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 14400)         // 60 % af 24.000
+  // Vedrører udelukkende det udlejede — uberørt.
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'vedligeholdelse'), 30000)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'vand'), 3600)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'varme'), 3600)
+})
+
+test('fradragsBeloeb: indtægter er upåvirkede ved enhver andel — lejen er den leje der er modtaget', () => {
+  for (const pct of [0, 1, 33, 60, 99, 100]) {
+    const saet = { ...eksempelSaet(), udlejet_andel_pct: pct }
+    assert.equal(fradragsBeloeb(saet, 'indtaegter', 'leje'), 72000, `andel ${pct}`)
+    assert.equal(fradragsBeloeb(saet, 'indtaegter', 'vand'), 3600, `andel ${pct}`)
+    assert.equal(fradragsBeloeb(saet, 'indtaegter', 'varme'), 3600, `andel ${pct}`)
+  }
+})
+
+test('fradragsBeloeb: 0 % nulstiller ejendomsposterne og kun dem', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 0 }
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld'), 0)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 0)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'vedligeholdelse'), 30000)
+  assert.equal(fradragsBeloeb(saet, 'indtaegter', 'leje'), 72000)
+})
+
+// Rækkefølgen af de to faktorer er et VALG, ikke en tilfældighed: pro rata først, så
+// andelen. Pro rata siger hvad der er afholdt i perioden (en kendsgerning om året),
+// andelen hvor meget af det der er fradragsberettiget. De to er kun ombyttelige indtil
+// afrundingen — effektivBeloeb runder til hele kroner, og gør man det på det allerede
+// nedskrevne beløb, får man et andet tal.
+test('fradragsBeloeb: pro rata regnes først, derefter andelen', () => {
+  const saet = {
+    fra_dato: '2025-08-05', til_dato: '2025-12-31',
+    udgifter: { faellesudgifter: 1000 },
+    prorata: { 'udgifter.faellesudgifter': true },
+    udlejet_andel_pct: 60,
+  }
+  const mdr = prorataMaaneder(saet)                          // 4,8709…
+  const proRataFoerst = Math.round(Math.round(1000 * mdr) * 0.6)   // 4.871 → 2.923
+  const andelFoerst = Math.round(1000 * 0.6 * mdr)                 // 2.923 — den anden vej
+  assert.equal(proRataFoerst, 2923)
+  assert.equal(andelFoerst, 2923)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), proRataFoerst)
+  assert.equal(effektivBeloeb(saet, 'udgifter', 'faellesudgifter'), 4871)  // uændret af andelen
+})
+
+// Rækkefølgen er ikke altid usynlig. Regnes andelen først, mister man ører FØR pro rata
+// ganger dem op, og forskellen bliver til hele kroner.
+test('fradragsBeloeb: pro rata før andel giver et andet tal end andel før pro rata', () => {
+  const saet = {
+    fra_dato: '2025-01-01', til_dato: '2025-12-31',
+    udgifter: { faellesudgifter: 1041 },
+    prorata: { 'udgifter.faellesudgifter': true },
+    udlejet_andel_pct: 33,
+  }
+  assert.equal(effektivBeloeb(saet, 'udgifter', 'faellesudgifter'), 12492)   // 1.041 × 12
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 4122)    // 33 % af 12.492
+  assert.equal(Math.round(1041 * 33 / 100) * 12, 4128)                       // den anden vej: 6 kr. fra
+})
+
+// Afrundingen sker PR. POST, til øre — den mindste enhed et beløb kan bære. Rundes der
+// først på summen, kan rækkerne i regnskabet ikke længere lægges sammen til totalen
+// (ADR-0001), og et regnskab hvor delene ikke giver totalen er værdiløst over for SKAT.
+// Afrundingen sker PR. POST og til HELE KRONER — samme konvention som effektivBeloeb
+// bruger på pro rata. Det er ikke kosmetik: regnskabets rækker skrives med kr() uden
+// decimaler, så en andel der efterlod ører ville give rækker der ikke kunne lægges
+// sammen til den viste total (60 % af 3.121 = 1.872,60 skrives som 1.873, men tæller
+// 1.872,60 i summen). ADR-0001 kræver at delene giver totalen.
+test('fradragsBeloeb: afrundes pr. post til hele kroner, så andelen ikke laver ører', () => {
+  const saet = { udgifter: { grundskyld: 3121, faellesudgifter: 13251 }, udlejet_andel_pct: 60 }
+  assert.equal(3121 * 60 / 100, 1872.6)                   // det uafrundede mellemresultat
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld'), 1873)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 7951)
+  assert.equal(sumFradragsUdgifter(saet), 1873 + 7951)    // rækkerne ER totalen
+})
+
+test('fradragsBeloeb: et tastet ørebeløb bliver til hele kroner efter andelen', () => {
+  const saet = { udgifter: { faellesudgifter: 21608.75 }, udlejet_andel_pct: 60 }
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 12965)
+})
+
+// Alle ører i et regnskab skal komme fra noget brugeren selv har tastet. Andelen må
+// ikke kunne tilføje nye — det er den eneste måde rækkerne kan blive ved med at summe
+// til den viste total.
+test('fradragsBeloeb: andelen tilføjer aldrig ører til et helt kronebeløb', () => {
+  for (const pct of [1, 12.5, 33, 60, 87, 99]) {
+    for (const beloeb of [1, 7, 999, 3120, 7488, 13250, 31200]) {
+      const v = fradragsBeloeb({ udgifter: { grundskyld: beloeb }, udlejet_andel_pct: pct }, 'udgifter', 'grundskyld')
+      assert.ok(Number.isInteger(v), `${pct} % af ${beloeb} gav ${v}`)
+    }
+  }
+})
+
+test('fradragsBeloeb: en hjemløs post er ikke en ejendomspost og røres ikke', () => {
+  const saet = { udgifter: { ejerforening: 12000 }, udlejet_andel_pct: 60 }
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'ejerforening'), 12000)
+})
+
+test('gruppeOpgoerelse: ved 100 % er hver række sit fulde beløb — intet er skåret ned', () => {
+  const g = gruppeOpgoerelse(eksempelSaet(), 'udgifter')
+  assert.equal(g.andelPct, 100)
+  assert.equal(g.sum, 68688)
+  assert.equal(g.sumFoerAndel, 68688)
+  for (const p of g.poster) assert.equal(p.beloeb, p.beloebFoerAndel, p.id)
+})
+
+test('gruppeOpgoerelse: en delvis andel skærer kun ejendomsposternes rækker ned', () => {
+  const g = gruppeOpgoerelse({ ...eksempelSaet(), udlejet_andel_pct: 60 }, 'udgifter')
+  const linje = (n) => g.poster.find(p => p.noegle === n)
+  assert.equal(g.andelPct, 60)
+  assert.equal(linje('grundskyld').beloebFoerAndel, 7488)
+  assert.equal(linje('grundskyld').beloeb, 4493)
+  assert.equal(linje('grundskyld').andel, true)
+  assert.equal(linje('faellesudgifter').beloeb, 14400)
+  assert.equal(linje('vedligeholdelse').beloeb, 30000)          // kun det udlejede
+  assert.equal(linje('vedligeholdelse').beloebFoerAndel, 30000)
+  assert.equal(linje('vedligeholdelse').andel, false)
+  assert.equal(linje('forsikring').andel, false, 'en ejendomspost uden beløb er ikke skåret ned')
+  // Rækkerne summer stadig til totalen (ADR-0001)
+  assert.equal(g.sum, [...g.poster, ...g.hjemloese].reduce((s, p) => s + p.beloeb, 0))
+  assert.equal(g.sum, 4493 + 14400 + 30000 + 3600 + 3600)   // 56.093
+  assert.equal(g.sumFoerAndel, 68688)
+})
+
+test('gruppeOpgoerelse: indtægtsgruppen er den samme uanset andelen', () => {
+  const fuld = gruppeOpgoerelse(eksempelSaet(), 'indtaegter')
+  for (const pct of [0, 25, 60, 99]) {
+    const delvis = gruppeOpgoerelse({ ...eksempelSaet(), udlejet_andel_pct: pct }, 'indtaegter')
+    assert.equal(delvis.sum, fuld.sum, `andel ${pct}`)
+    assert.deepEqual(delvis.poster.map(p => p.beloeb), fuld.poster.map(p => p.beloeb), `andel ${pct}`)
+  }
+})
+
+test('gruppeOpgoerelse: en hjemløs post tælles fuldt med, uanset andelen', () => {
+  const saet = { udgifter: { grundskyld: 7488, ejerforening: 12000 }, udlejet_andel_pct: 60 }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.hjemloese[0].beloeb, 12000)
+  assert.equal(g.hjemloese[0].beloebFoerAndel, 12000)
+  assert.equal(g.hjemloese[0].ejendomspost, false)
+  assert.equal(g.hjemloese[0].andel, false)
+  assert.equal(g.sum, 4493 + 12000)
+})
+
+test('resultatFoerRenter: den udlejede andel slår igennem på fradraget, ikke på lejen', () => {
+  const fuld = eksempelSaet()
+  const delvis = { ...fuld, udlejet_andel_pct: 60 }
+  assert.equal(sumIndtaegter(delvis), sumIndtaegter(fuld))                 // 79.200 begge veje
+  assert.equal(sumFradragsUdgifter(delvis), 56093)     // 68.688 − 40 % af (7.488 + 24.000)
+  assert.equal(resultatFoerRenter(delvis), 23107)      // 79.200 − 56.093
+  // Et mindre fradrag giver et STØRRE resultat — det er hele pointen.
+  assert.ok(resultatFoerRenter(delvis) > resultatFoerRenter(fuld))
+})
+
+test('resultatFoerRenter: 0 % fjerner ejendomsposternes fradrag, men ingen andre', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 0 }
+  assert.equal(sumFradragsUdgifter(saet), 68688 - 7488 - 24000)            // 37.200
+  assert.equal(sumIndtaegter(saet), 79200)
+})
+
+// De eneste ører der må stå i et regnskab er dem brugeren selv har tastet. Andelen laver
+// ingen nye, så en total kan stadig lægges sammen af sine rækker — også når en enkelt
+// post er tastet med ører.
+test('en delvis andel efterlader kun de ører brugeren selv har tastet', () => {
+  const saet = {
+    indtaegter: { leje: 79200 },
+    udgifter: {
+      grundskyld: 7488, faellesudgifter: 31200, vedligeholdelse: 21608.75,
+      vand: 3600, varme: 3600, andet: 2695,
+    },
+    udlejet_andel_pct: 60,
+  }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.deepEqual(g.poster.filter(p => p.beloeb).map(p => [p.noegle, p.beloeb]), [
+    ['grundskyld', 4493], ['faellesudgifter', 18720], ['vedligeholdelse', 21608.75],
+    ['vand', 3600], ['varme', 3600], ['andet', 2695],
+  ])
+  assert.equal(sumFradragsUdgifter(saet), 54716.75)
+  assert.equal(resultatFoerRenter(saet), 24483.25)
+})
+
+test('renteudgifter og forbedringer ligger uden for den udlejede andel', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 40 }
+  assert.equal(sumRenter(saet), 42380)                                     // renter er personlige
+  assert.equal(saet.forbedringer, 12000)                                   // ikke fradrag i forvejen
 })
 
 test('udlejningsdage (datobaseret): faktiske kalenderdage inkl. start og slut', () => {

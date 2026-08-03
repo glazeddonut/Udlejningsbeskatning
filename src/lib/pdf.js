@@ -129,9 +129,13 @@ export async function genererRegnskabPdf(opgoerelse) {
   hline(y); y -= 4
 
   // ── Sektioner ──
+  // Sektionens forklaring skrives med samme småtekst som afstemningens, under rækkerne.
+  // I dag bærer kun udgiftssektionen en — forklaringen af den udlejede andel (ADR-0003)
+  // — og den er tom ved fuld udlejning, hvor der ikke er noget at forklare.
   for (const s of opstilling.sektioner) {
     sektion(s.titel)
     for (const r of s.raekker) linje(r.label, r.vaerdi, { f: r.sum ? bold : font })
+    if (s.forklaring) { y -= 2; smaatekst(s.forklaring) }
   }
 
   // ── Afstemning mod bilag ──

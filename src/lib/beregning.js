@@ -9,7 +9,7 @@
 //  - Renteudgifter er personlige (negativ kapitalindkomst), IKKE en del af
 //    udlejningsresultatet. Fordeles efter HÆFTELSE på det enkelte lån.
 
-import { posterIGruppe, erKendtPost } from './kontoplan.js'
+import { posterIGruppe, erKendtPost, findPost } from './kontoplan.js'
 
 // Nulstillede beløb for én af kontoplanens grupper, i kontoplanens rækkefølge.
 const nulPoster = (gruppe) =>
@@ -235,6 +235,62 @@ export function erProrata(saet, gruppe, key) {
   return !!saet?.prorata?.[`${gruppe}.${key}`]
 }
 
+// ── Den udlejede andel ─────────────────────────────────────────────────────────
+//
+// Hvor stor en del af ejendommen der er udlejet erhvervsmæssigt. Den indberettes til
+// skat.dk (felt 744, "erhvervsmæssig andel"), og fra ADR-0003 er den også den andel
+// fradraget REGNES på — ellers kunne man indberette 60 % og fradrage 100 %.
+//
+// Den rammer KUN ejendomsposter (se fradragsBeloeb). Det er ikke en tilfældig
+// afgrænsning: "erhvervsmæssig andel" findes for delvis udlejning — fx et værelse i
+// egen bolig — hvor kun den udlejede del af EJENDOMMENS fælles omkostninger er
+// fradragsberettiget. Lejen er den leje der faktisk er modtaget, og vedligeholdelse
+// af det udlejede er afholdt fuldt ud, uanset hvor stor en del af boligen der lejes ud.
+//
+// Andelen læses som et tal, ikke som en sandhedsværdi: 0 % er en rigtig andel (intet
+// er udlejet erhvervsmæssigt) og må ikke stiltiende blive til 100. Er feltet derimod
+// slet ikke oplyst — tomt, fraværende eller ulæseligt — er svaret fuld udlejning,
+// samme default som tomtSaet, så ældre talsæt uden feltet regnes præcis som før.
+//
+// Værdien klemmes til 0–100. Grænsen opad er ikke kosmetik: uden den ville en tastefejl
+// på 600 gange et fradrag op med seks, og et for STORT fradrag er den ene fejl der
+// koster over for SKAT. Selve indtastningsfeltets validering hører til i UI'et.
+export function udlejetAndel(saet) {
+  const raa = saet?.udlejet_andel_pct
+  if (raa === '' || raa === null || raa === undefined) return 100
+  const v = Number(raa)
+  if (!Number.isFinite(v)) return 100
+  return Math.min(100, Math.max(0, v))
+}
+
+// Rammer den udlejede andel denne post? Kun en post kontoplanen KENDER og har markeret
+// som ejendomspost. En hjemløs post — en værdi under en nøgle kontoplanen ikke kender —
+// har intet flag, og fraværet af en oplysning er ikke det samme som et "ja". At skære
+// et fradrag ned på et gæt ville ændre et tal der indberettes til SKAT, uden at nogen
+// havde taget stilling. Den hjemløse post står i forvejen som sin egen synlige række
+// (ADR-0001), så brugeren kan flytte den til en rigtig post, hvis den hører til der.
+const erEjendomspost = (gruppe, noegle) => !!findPost(gruppe, noegle)?.ejendomspost
+
+// Det FRADRAGSBERETTIGEDE beløb for én post: det effektive årsbeløb, nedskrevet med den
+// udlejede andel hvis posten er en ejendomspost (ADR-0003).
+//
+// De to faktorer regnes i en bevidst rækkefølge: pro rata FØRST, andelen derefter.
+// Pro rata svarer på hvad der er afholdt i årets udlejningsperiode — en kendsgerning om
+// året — og andelen på hvor meget af det, der er fradragsberettiget. Faktorerne er kun
+// ombyttelige indtil afrundingen, og forskellen kan blive hele kroner: 33 % af 12 × 1.041
+// er 4.122, mens 12 × 33 % af 1.041 er 4.128.
+//
+// Der afrundes PR. POST og til HELE KRONER — samme konvention som effektivBeloeb bruger
+// på pro rata. Andelen må ikke kunne tilføje ører til et regnskab, for rækkerne skrives
+// med kr() uden decimaler: 60 % af 3.121 er 1.872,60, som ville stå som 1.873 i sin
+// række, men tælle 1.872,60 med i totalen. Så ville delene ikke længere give totalen
+// (ADR-0001). Alle ører i et regnskab skal komme fra noget brugeren selv har tastet.
+export function fradragsBeloeb(saet, gruppe, noegle) {
+  const beloeb = effektivBeloeb(saet, gruppe, noegle)
+  if (!erEjendomspost(gruppe, noegle)) return beloeb
+  return Math.round(beloeb * udlejetAndel(saet) / 100)
+}
+
 // Effektivt årsbeløb for et felt: pro rata → månedsbeløb × forholdsmæssige måneder; ellers rå værdi.
 export function effektivBeloeb(saet, gruppe, key) {
   const raw = Number(saet?.[gruppe]?.[key]) || 0
@@ -250,23 +306,50 @@ export function effektivBeloeb(saet, gruppe, key) {
 // rapporteres eksplicit, så en visende flade kan give dem hver sin række. Invarianten
 // er, at poster + hjemløse altid summer til `sum` — et regnskab hvor delene ikke giver
 // totalen er værdiløst som dokumentation over for SKAT (ADR-0001).
+//
+// Hver linje bærer to beløb, og forskellen på dem er hele den udlejede andel (ADR-0003):
+//  - `beloebFoerAndel` er det AFHOLDTE beløb for perioden (efter pro rata). Det er det
+//    tal der er tastet, og det tal et bilag kan dokumentere — derfor afstemmes der mod
+//    dette, ikke mod fradraget.
+//  - `beloeb` er det FRADRAGSBERETTIGEDE beløb: samme tal, nedskrevet med den udlejede
+//    andel hvis linjen er en ejendomspost. Det er dette der summer til `sum` og videre
+//    til udlejningsresultatet.
+// Ved fuld udlejning er de to identiske, og gruppen er tal for tal som før.
 export function gruppeOpgoerelse(saet, gruppe) {
-  const linje = (noegle, post) => ({
-    id: `${gruppe}.${noegle}`,
-    gruppe,
-    noegle,
-    label: post?.label ?? '',
-    hint: post?.hint ?? '',
-    ejendomspost: post?.ejendomspost ?? false,
-    prorata: erProrata(saet, gruppe, noegle),
-    beloeb: effektivBeloeb(saet, gruppe, noegle),
-  })
+  const andelPct = udlejetAndel(saet)
+  const linje = (noegle, post) => {
+    const beloebFoerAndel = effektivBeloeb(saet, gruppe, noegle)
+    const beloeb = fradragsBeloeb(saet, gruppe, noegle)
+    return {
+      id: `${gruppe}.${noegle}`,
+      gruppe,
+      noegle,
+      label: post?.label ?? '',
+      hint: post?.hint ?? '',
+      ejendomspost: post?.ejendomspost ?? false,
+      prorata: erProrata(saet, gruppe, noegle),
+      // `andel` er svaret på "har den udlejede andel skrevet netop DENNE linje ned?".
+      // Det er ikke det samme spørgsmål som `ejendomspost`: ved fuld udlejning, og på en
+      // post uden beløb, er der intet skåret fra og intet at forklare. Flaget bor her, så
+      // indtastningen, opstillingen og forklaringen læser ét svar i stedet for hver at
+      // stille spørgsmålet på sin egen måde.
+      andel: beloeb !== beloebFoerAndel,
+      beloebFoerAndel,
+      beloeb,
+    }
+  }
   const poster = posterIGruppe(gruppe).map(p => linje(p.noegle, p))
   const hjemloese = Object.keys(saet?.[gruppe] || {})
     .filter(k => !erKendtPost(gruppe, k))
     .map(k => linje(k, null))
-  const sum = [...poster, ...hjemloese].reduce((s, l) => s + l.beloeb, 0)
-  return { poster, hjemloese, sum }
+  const alle = [...poster, ...hjemloese]
+  return {
+    poster,
+    hjemloese,
+    sum: alle.reduce((s, l) => s + l.beloeb, 0),
+    sumFoerAndel: alle.reduce((s, l) => s + l.beloebFoerAndel, 0),
+    andelPct,
+  }
 }
 
 export function sumIndtaegter(saet) {

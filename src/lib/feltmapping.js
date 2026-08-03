@@ -16,7 +16,7 @@
 //
 // "kilde" evalueres pr. person i evalKilde nedenfor.
 
-import { udlejningsdage, udlejningsdage360, manglerPeriode } from './beregning.js'
+import { udlejningsdage, udlejningsdage360, manglerPeriode, udlejetAndel } from './beregning.js'
 
 // `naar`: 'overskud' vises kun når personens resultat ≥ 0; 'underskud' kun når < 0.
 // (Verificeret mod skat.dk juli 2026: forskud 221/435, 481, 699; oplysningsskema 111/112, 117, 42, 699.)
@@ -108,7 +108,10 @@ export function evalKilde(kilde, { personOpg, saet, person }) {
     // kunne komme til at taste ind i felt 748 / rubrik 207. Fladen skriver flaget.
     case 'udlejningsdage': return manglerPeriode(saet) ? null : udlejningsdage(saet)
     case 'udlejningsdage360': return manglerPeriode(saet) ? null : udlejningsdage360(saet)
-    case 'udlejet_andel_pct': return Math.round(Number(saet?.udlejet_andel_pct) || 0)
+    // Præcis den andel fradraget er regnet på (ADR-0003) — ikke det rå felt. Læses de to
+    // hver for sig, kan man indberette 0 % i felt 744 (tomt felt) og samtidig fradrage
+    // 100 %, eller indberette 150 % af en tastefejl mens fradraget er klemt til 100.
+    case 'udlejet_andel_pct': return udlejetAndel(saet)
     case 'naertstaaende': return saet?.naertstaaende ? 'Ja' : 'Nej'
     case 'cpr': return person?.cpr || '(indtast CVR/SE eller CPR)'
     case 'moms_nul': return 0

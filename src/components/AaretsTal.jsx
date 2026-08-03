@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, kr, daNum } from '../lib/format.js'
+import { parseNum, kr, daNum, pct } from '../lib/format.js'
 import { NumberField, TextField } from './fields.jsx'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, personOpgoerelse, resolveFordeling, gruppeOpgoerelse,
   udlejningsdage, udlejningsdage360, erProrata, effektivBeloeb, estimeretAarligRente,
   prorataMaaneder, aarsgrundlag, periodeAfvigelse, periodeKvittering, manglerPeriode,
+  udlejetAndel,
 } from '../lib/beregning.js'
 import { normaliserSaet } from '../lib/saet.js'
 
@@ -222,6 +223,13 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
 function BeloebFelt({ post, saet, setField, setProrata }) {
   const { gruppe, noegle, label, hint } = post
   const pro = erProrata(saet, gruppe, noegle)
+  // En ejendomspost er kun fradragsberettiget med den udlejede andel (ADR-0003). Det skal
+  // stå ved feltet selv: ellers ville tallet i feltet og tallet i totalen være to
+  // forskellige beløb uden nogen forklaring imellem.
+  // `post` er gruppeopgørelsens linje, og den bærer selv svaret på om andelen har skåret
+  // netop dette beløb ned — så feltet, kassen nedenfor og regnskabet ikke kan komme til
+  // at være uenige om hvilke poster der er ramt.
+  const andelPct = udlejetAndel(saet)
   const raw = saet[gruppe]?.[noegle] ?? 0
   const [text, setText] = useState(() => (raw ? daNum(raw) : ''))
   const [focus, setFocus] = useState(false)
@@ -247,6 +255,11 @@ function BeloebFelt({ post, saet, setField, setProrata }) {
         <span className="suffix">{pro ? 'kr./md' : 'kr.'}</span>
       </div>
       {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, noegle))} for perioden</span>}
+      {post.andel && (
+        <span className="hint">
+          ejendomspost · fradrag {kr(post.beloeb)} ved {pct(andelPct)} udlejet andel
+        </span>
+      )}
     </div>
   )
 }
@@ -281,10 +294,54 @@ function HjemloesePoster({ poster }) {
   )
 }
 
+// Hvilke poster den udlejede andel rammer, med det afholdte beløb ved siden af fradraget
+// (ADR-0003). Uden den ville et par af udgiftsfelterne tavst tælle mindre med i totalen
+// end det tal der står i feltet — altså præcis den black box andelen ikke må være.
+// Vises kun når andelen faktisk har skåret noget fra.
+//
+// Sumrækken er ejendomsposternes egen — ikke hele gruppens. En total der ikke kan lægges
+// sammen af de rækker der står over den, læses som en regnefejl (ADR-0001). Gruppens
+// total står lige under kassen, hvor alle dens poster hører til.
+//
+// Baggrunden er --surface-2 og mærket .badge.neutral, som findes i begge temaer.
+function AndelsPoster({ poster, andelPct }) {
+  const sumFoerAndel = poster.reduce((s, p) => s + p.beloebFoerAndel, 0)
+  const sum = poster.reduce((s, p) => s + p.beloeb, 0)
+  return (
+    <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+      <p style={{ margin: 0 }}><span className="badge neutral">Udlejet andel: {pct(andelPct)}</span></p>
+      <table className="data" style={{ marginTop: 8 }}>
+        <thead>
+          <tr><th>Ejendomspost</th><th className="num">Afholdt</th><th className="num">Fradrag</th></tr>
+        </thead>
+        <tbody>
+          {poster.map(p => (
+            <tr key={p.id}>
+              <td>{p.label}</td>
+              <td className="num">{kr(p.beloebFoerAndel)}</td>
+              <td className="num">{kr(p.beloeb)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td><strong>Ejendomsposter i alt</strong></td>
+            <td className="num">{kr(sumFoerAndel)}</td>
+            <td className="num"><strong>{kr(sum)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+        Det er kolonnen “Fradrag” der tæller med i gruppens total; “Afholdt” er det bilagene
+        skal dokumentere. Gruppens øvrige poster indgår fuldt ud.
+      </p>
+    </div>
+  )
+}
+
 // Ét kort pr. gruppe i kontoplanen: felterne bygges af kontoplanen, ikke af en liste
 // her i komponenten, og totalen er gruppens egen sum — inklusive hjemløse poster.
 function GruppeKort({ titel, gruppe, saet, setField, setProrata }) {
   const g = gruppeOpgoerelse(saet, gruppe)
+  const ramte = g.poster.filter(p => p.andel)   // linjen bærer selv svaret (ADR-0003)
   return (
     <div className="card">
       <h2>{titel}</h2>
@@ -294,6 +351,7 @@ function GruppeKort({ titel, gruppe, saet, setField, setProrata }) {
         ))}
       </div>
       {g.hjemloese.length > 0 && <HjemloesePoster poster={g.hjemloese} />}
+      {ramte.length > 0 && <AndelsPoster poster={ramte} andelPct={g.andelPct} />}
       <p className="muted" style={{ marginTop: 10 }}>I alt: <strong>{kr(g.sum)}</strong></p>
     </div>
   )
@@ -346,7 +404,17 @@ function Redigering({ saet, loans, persons, property, fordeling, grundlag, setFi
         <div className="grid">
           <TextField label="Fra dato" type="date" value={saet.fra_dato || ''} onChange={v => setField(null, 'fra_dato', v)} />
           <TextField label="Til dato" type="date" value={saet.til_dato || ''} onChange={v => setField(null, 'til_dato', v)} />
-          <NumberField label="Udlejet andel" value={saet.udlejet_andel_pct || ''} onChange={v => setField(null, 'udlejet_andel_pct', v)} suffix="%" />
+          {/* Samme andel indberettes til skat.dk (felt 744) og regnes fradrag på (ADR-0003).
+              Hintet siger hvad den gør, så en ændring fra 100 ikke er en tavs nedskrivning.
+              `?? ''` og ikke `|| ''`: 0 % er en rigtig andel, der nulstiller ejendoms-
+              posternes fradrag, og et felt der så tomt ud ville skjule præcis det. */}
+          <NumberField
+            label="Udlejet andel"
+            hint="rammer kun ejendomsposter, aldrig indtægter"
+            value={saet.udlejet_andel_pct ?? ''}
+            onChange={v => setField(null, 'udlejet_andel_pct', v)}
+            suffix="%"
+          />
         </div>
         {/* Uden periode vises flaget i stedet for et dagstal (ADR-0002). Et "0 dage"
             eller det tidligere 360 ville begge være svar appen selv havde fundet på. */}

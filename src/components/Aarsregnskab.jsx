@@ -127,6 +127,9 @@ function Opstilling({ opstilling }) {
         </div>
       </div>
 
+      {/* Sektionens forklaring står under tabellen — i dag kun udgifternes forklaring af
+          den udlejede andel (ADR-0003). Den kommer fra opstillingen, ikke herfra, så
+          PDF'en skriver ordret det samme. Er den tom, står der ingenting. */}
       {sektioner.map(s => (
         <section key={s.id}>
           <h3 className="rg-sektion">{s.titel}</h3>
@@ -140,6 +143,7 @@ function Opstilling({ opstilling }) {
               ))}
             </tbody>
           </table>
+          {s.forklaring && <p className="rg-forklaring">{s.forklaring}</p>}
         </section>
       ))}
 

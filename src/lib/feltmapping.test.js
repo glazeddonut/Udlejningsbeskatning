@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { hentFeltmapping, felterForRolle, feltRolle, evalKilde } from './feltmapping.js'
+import { fradragsBeloeb } from './beregning.js'
 
 test('hentFeltmapping: bruger defaults for det definerede år', () => {
   assert.ok(hentFeltmapping(2026, 'forskud').length > 0)
@@ -66,5 +67,22 @@ test('evalKilde: uden periode indberettes intet dagstal', () => {
   for (const saet of [{}, { fra_dato: '2025-08-06' }, { til_dato: '2025-12-31' }, { fra_maaned: 1, til_maaned: 12 }]) {
     assert.equal(evalKilde('udlejningsdage360', { saet }), null)
     assert.equal(evalKilde('udlejningsdage', { saet }), null)
+  }
+})
+
+// ADR-0003: felt 744 ("erhvervsmæssig andel") skal bære PRÆCIS den andel fradraget er
+// regnet på. Læses de to hver for sig, kan man indberette ét tal til SKAT og fradrage
+// efter et andet — netop den fejl ticketen findes for at lukke.
+test('evalKilde: felt 744 er den samme andel som fradraget er beregnet på', () => {
+  const medAndel = (pct) => ({
+    udgifter: { grundskyld: 10000, vedligeholdelse: 10000 },
+    udlejet_andel_pct: pct,
+  })
+  for (const raa of [60, 0, 100, '', undefined, 150, -20, 'vrøvl']) {
+    const saet = medAndel(raa)
+    const indberettet = evalKilde('udlejet_andel_pct', { saet })
+    // Grundskyld er ejendomspost; 10.000 kr. gør fradraget til andelen skrevet som kroner.
+    assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld') / 100, indberettet, `andel ${raa}`)
+    assert.equal(fradragsBeloeb(saet, 'udgifter', 'vedligeholdelse'), 10000, `andel ${raa}`)
   }
 })

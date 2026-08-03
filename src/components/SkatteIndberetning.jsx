@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../lib/api.js'
-import { tal } from '../lib/format.js'
+import { tal, pct, daNum } from '../lib/format.js'
 import { normaliserSaet } from '../lib/saet.js'
 import { personOpgoerelse, resolveFordeling, manglerPeriode } from '../lib/beregning.js'
 import { hentFeltmapping, evalKilde, feltRolle, felterForRolle } from '../lib/feltmapping.js'
@@ -16,7 +16,11 @@ const DOKTYPER = [
 function visVaerdi(raw, enhed) {
   if (raw === null) return { vis: 'Periode mangler', kopi: null }
   if (enhed === 'kr') return { vis: tal(raw) + ' kr.', kopi: String(raw) }
-  if (enhed === '%') return { vis: tal(raw) + ' %', kopi: String(raw) }
+  // Procenter skrives med deres decimaler. Felt 744 bærer nu præcis den andel fradraget
+  // er regnet på (ADR-0003), og den kan være brøkdelt — `tal()` ville runde 12,5 % op til
+  // "13 %" og dermed vise ét tal på skærmen mens fradraget hvilede på et andet.
+  // Et helt tal skrives ordret som før.
+  if (enhed === '%') return { vis: pct(raw), kopi: daNum(raw) }
   if (enhed === 'dage') return { vis: tal(raw) + ' dage', kopi: String(raw) }
   return { vis: String(raw), kopi: String(raw) }
 }

@@ -119,7 +119,9 @@ Rammer kun ejendomsposter, aldrig indtægter.
 
 **Opstilling**:
 Årsregnskabet som ren data — hoved, sektioner, rækker, afstemning og note — uafhængigt
-af om det renderes som tabel på skærmen eller som PDF.
+af om det renderes som tabel på skærmen eller som PDF. En sektion kan bære en
+**forklaring**: én sætning under rækkerne, der siger hvorfor tallene ser ud som de gør,
+fx hvilke poster den udlejede andel har skåret ned. Tom når der intet er at forklare.
 _Undgå_: rapport, view
 
 **Bilag**:
