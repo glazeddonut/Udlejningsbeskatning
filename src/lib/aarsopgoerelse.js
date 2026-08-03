@@ -30,7 +30,7 @@
 // ikke det der er budgetteret — og er derfor `null` ved budget.
 
 import { normaliserSaet } from './saet.js'
-import { bilagForAar, bilagPost, bilagssummer } from './bilag.js'
+import { bilagForAar, bilagPost, bilagssummer, migrerBilag } from './bilag.js'
 import { KONTOPLAN } from './kontoplan.js'
 import { kr, kr2, oere } from './format.js'
 import {
@@ -284,7 +284,12 @@ export function aarsopgoerelse({ aar, grundlag = 'faktisk', years, leases, perso
   const grundlagFraKontrakt = aarsgrundlag(leases, year.aar)
   const fordeling = resolveFordeling(settings, persons)
   const personer = personOpgoerelse(saet, { persons, property, loans, fordeling })
-  const aaretsBilag = bilagForAar(bilag, year.aar)
+  // Bilagene migreres her, ikke kun i serverens loadDb. Indgangen lover db-formede
+  // data ind (ADR-0004), og en DB fra disken kan stadig bære den gamle frie kategori.
+  // Uden migreringen ville hvert af de bilag tavst blive til en "ukendt post" — et
+  // svar der ser plausibelt ud, netop når oplysningen mangler. migrerBilag er
+  // idempotent, så et allerede migreret bilag er uberørt.
+  const aaretsBilag = bilagForAar(migrerBilag(bilag), year.aar)
 
   // Grupperne gøres op ét sted og genbruges til både totalerne og rækkerne, så de
   // to ikke kan komme til at bygge på hver sin optælling.

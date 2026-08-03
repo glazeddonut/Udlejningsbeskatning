@@ -504,6 +504,25 @@ test('afstemningens kolonner er de samme på begge flader', () => {
   }
 })
 
+test('et bilag med gammel fri kategori migreres af indgangen selv', () => {
+  // Indgangen lover db-formede data ind (ADR-0004), og en DB fra disken kan stadig
+  // bære den gamle kategori. Uden migrering her ville bilaget tavst blive en
+  // "ukendt post" — et svar der ser plausibelt ud, netop når oplysningen mangler.
+  const gammelt = { id: 1, aar: 2025, dato: '2025-03-17', tekst: 'bilag 1', kategori: 'Vedligeholdelse', type: 'udgift', beloeb: 5211 }
+  const o = kald({ bilag: [gammelt] })
+  const r = afstRaekke(o, 'udgifter.vedligeholdelse')
+  assert.equal(r.bilagssum, 5211, 'bilaget skal ramme sin post, ikke havne som ukendt')
+  assert.equal(r.status, 'stemmer')
+  assert.equal(afstemning(o).raekker.find(x => x.status === 'ukendt_post'), undefined)
+})
+
+test('migreringen i indgangen muterer ikke inddata', () => {
+  const gammelt = { id: 1, aar: 2025, dato: '2025-03-17', tekst: 'bilag 1', kategori: 'Vedligeholdelse', type: 'udgift', beloeb: 5211 }
+  kald({ bilag: [gammelt] })
+  assert.equal(gammelt.post_id, undefined)
+  assert.equal(gammelt.kategori, 'Vedligeholdelse')
+})
+
 // ── Noten ─────────────────────────────────────────────────────────────────────
 
 test('noteteksten findes ét sted og er den samme i opstillingen', () => {
