@@ -1,10 +1,15 @@
+// ── Regnskabs-PDF ─────────────────────────────────────────────────────────────
+//
+// Her ligger kun ægte pdf-lib-viden: WinAnsi-værn, ordombrydning, sideskift,
+// kolonneplacering, billedindlejring og sammenfletning af PDF-bilag. Hvad
+// regnskabet indeholder — hoved, sektioner, rækker, bilagsoversigt og note —
+// kommer færdigt ind som opstillingen fra aarsopgoerelse.js (ADR-0004), så
+// skærmen og PDF'en ikke kan vise hver sin ting.
+//
+// Den eneste tilladte forskel på de to flader er de vedhæftede bilagsfiler: en
+// skærmside kan ikke bære en indscannet kvittering.
+
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import { bilagForAar } from './bilag.js'
-import { kr, kr2 } from './format.js'
-import {
-  sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter,
-  personOpgoerelse, resolveFordeling, effektivBeloeb, udlejningsdage,
-} from './beregning.js'
 
 const A4 = [595.28, 841.89]
 const MARGIN = 50
@@ -12,28 +17,43 @@ const INK = rgb(0.11, 0.14, 0.2)
 const MUTED = rgb(0.42, 0.45, 0.53)
 const LINE = rgb(0.8, 0.83, 0.88)
 
-const INDTAEGT_RAEKKER = [
-  ['leje', 'Husleje (ekskl. forbrug)'], ['vand', 'Vand (opkraevet)'],
-  ['varme', 'Varme (opkraevet)'], ['andet', 'Anden indtaegt'],
-]
-const UDGIFT_RAEKKER = [
-  ['grundskyld', 'Grundskyld (ejendomsskat)'], ['faellesudgifter', 'Faellesudgifter (drift)'],
-  ['forsikring', 'Forsikring'], ['vedligeholdelse', 'Vedligeholdelse'],
-  ['vand', 'Vand (afholdt)'], ['varme', 'Varme (afholdt)'],
-  ['administration', 'Administration'], ['renovation', 'Renovation'], ['andet', 'Andet'],
-]
-
-// pdf-lib's Helvetica bruger WinAnsi — erstat tegn den ikke kan kode.
-function safe(s) {
-  return String(s ?? '')
-    .replace(/[–—]/g, '-')      // en/em-dash → -
-    .replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
-    .replace(/·/g, '-').replace(/→/g, '->')
-    .replace(/ | /g, ' ')       // no-break spaces → almindeligt mellemrum
+// Bilagsoversigtens kolonner er ren sidelayout: hvor langt inde kolonnen starter,
+// og hvor mange tegn der er plads til. Kolonnerne selv (og deres overskrifter)
+// kommer fra opstillingen.
+const BILAG_LAYOUT = {
+  nummer: { x: 0 },
+  dato: { x: 34 },
+  tekst: { x: 110, maks: 34 },
+  kategori: { x: 300, maks: 20 },
+  beloeb: { hoejre: true },
 }
 
-// Generér regnskabs-PDF som Uint8Array. Henter bilag-filer via /api/bilag/:id/fil.
-export async function genererRegnskabPdf({ year, saet, grundlag, persons, property, loans, settings, bilag = [] }) {
+// Får opstillingen en kolonne mere, skal den også have en plads på siden. Et tavst
+// fald tilbage til x = 0 ville tegne den oven i "Nr." — altså præcis den slags drift
+// mellem to lister, der ikke må kunne opstå uden at nogen opdager det.
+function bilagLayout(kolonneId) {
+  const l = BILAG_LAYOUT[kolonneId]
+  if (!l) throw new Error(`Bilagsoversigtens kolonne "${kolonneId}" har ingen plads i PDF-layoutet`)
+  return l
+}
+
+// pdf-lib's Helvetica koder WinAnsi. Æ, ø, å, tankestreger, krøllede citationstegn,
+// midtprik og no-break space kodes KORREKT — de skal ikke erstattes, og regnskabet
+// er derfor skrevet på dansk. Kun det WinAnsi reelt ikke kan (pile, flueben, emoji,
+// linjeskift) skal væk, ellers kaster pdf-lib midt i genereringen.
+const WINANSI_EKSTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'
+const kanKodes = (ch) => {
+  const c = ch.codePointAt(0)
+  return (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) || WINANSI_EKSTRA.includes(ch)
+}
+function safe(s) {
+  return [...String(s ?? '')].map(ch => (kanKodes(ch) ? ch : (ch === '→' ? '->' : '?'))).join('')
+}
+
+// Generér regnskabs-PDF som Uint8Array ud fra én årsopgørelse (aarsopgoerelse.js).
+// Bilagsfilerne hentes via /api/bilag/:id/fil.
+export async function genererRegnskabPdf(opgoerelse) {
+  const { opstilling, bilag = [] } = opgoerelse
   const doc = await PDFDocument.create()
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
@@ -49,76 +69,56 @@ export async function genererRegnskabPdf({ year, saet, grundlag, persons, proper
   }
   const hline = (yy) => page.drawLine({ start: { x: MARGIN, y: yy }, end: { x: W - MARGIN, y: yy }, thickness: 0.7, color: LINE })
   const need = (space) => { if (y - space < MARGIN) { page = doc.addPage(A4); y = H - MARGIN } }
-  const row = (label, value, { f = font, gap = 16 } = {}) => {
+  const linje = (label, value, { f = font, gap = 16 } = {}) => {
     need(gap); text(label, MARGIN, y, 10, f); right(value, W - MARGIN, y, 10, f); y -= gap
   }
   const sektion = (t) => { need(30); y -= 8; text(t.toUpperCase(), MARGIN, y, 10, bold, MUTED); y -= 6; hline(y); y -= 12 }
 
   // ── Hoved ──
-  text(`Regnskab for udlejning - ${year.aar}`, MARGIN, y, 18, bold); y -= 24
-  const ejendom = `${property?.navn || 'Ejendom'}${property?.adresse ? ', ' + property.adresse : ''}`
-  text(ejendom, MARGIN, y, 10, font, MUTED); y -= 14
-  text('Ejere: ' + persons.map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' - '), MARGIN, y, 10, font, MUTED); y -= 14
-  text(`Grundlag: ${grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} - naertstaaende: ${saet.naertstaaende ? 'ja' : 'nej'} - ${udlejningsdage(saet)} udlejningsdage`, MARGIN, y, 10, font, MUTED); y -= 8
+  text(opstilling.hoved.overskrift, MARGIN, y, 18, bold); y -= 24
+  opstilling.hoved.linjer.forEach((l, i) => {
+    text(l, MARGIN, y, 10, font, MUTED)
+    y -= i === opstilling.hoved.linjer.length - 1 ? 8 : 14
+  })
   hline(y); y -= 4
 
-  // ── Indtaegter ──
-  sektion('Indtaegter')
-  INDTAEGT_RAEKKER.filter(([k]) => saet.indtaegter[k]).forEach(([k, l]) => row(l, kr(effektivBeloeb(saet, 'indtaegter', k))))
-  row('Indtaegter i alt', kr(sumIndtaegter(saet)), { f: bold })
-
-  // ── Udgifter ──
-  sektion('Fradragsberettigede udgifter')
-  UDGIFT_RAEKKER.filter(([k]) => saet.udgifter[k]).forEach(([k, l]) => row(l, kr(effektivBeloeb(saet, 'udgifter', k))))
-  row('Udgifter i alt', kr(sumFradragsUdgifter(saet)), { f: bold })
-
-  // ── Resultat ──
-  sektion('Resultat')
-  row('Udlejningsresultat foer renter', kr(resultatFoerRenter(saet)), { f: bold })
-
-  // ── Fordeling ──
-  const fordeling = resolveFordeling(settings, persons)
-  const opg = personOpgoerelse(saet, { persons, property, loans, fordeling })
-  sektion('Fordeling pr. ejer')
-  opg.forEach(o => row(
-    `${o.navn}${o.erBeskattet ? '' : ' (beskattes ikke)'} - resultat ${kr(o.resultatAndel)}, renter ${kr(o.renter)}`,
-    kr(o.nettoKapitalindkomst)
-  ))
-  row('Renteudgifter i alt (personlige, kapitalindkomst)', kr(sumRenter(saet)), { f: bold })
-
-  if (saet.forbedringer > 0) {
-    sektion('Forbedringer (ikke fradrag)')
-    row('Forbedringer i aaret - tillaegges anskaffelsessummen', kr(saet.forbedringer))
+  // ── Sektioner ──
+  for (const s of opstilling.sektioner) {
+    sektion(s.titel)
+    for (const r of s.raekker) linje(r.label, r.vaerdi, { f: r.sum ? bold : font })
   }
 
-  // ── Bilagsliste ──
-  // Nummer og rækkefølge udledes samme sted som på skærmen — PDF'en må ikke kunne
-  // vise et andet bilagsnummer end Bilag-fanen.
-  const aaretsBilag = bilagForAar(bilag, year.aar)
-  sektion(`Bilagsoversigt (${aaretsBilag.length})`)
-  if (aaretsBilag.length === 0) {
-    row('Ingen bilag registreret.', '')
+  // ── Bilagsoversigt ──
+  const oversigt = opstilling.bilagsoversigt
+  sektion(oversigt.titel)
+  if (oversigt.antal === 0) {
+    linje(oversigt.tom_tekst, '')
   } else {
     need(18)
-    text('Nr.', MARGIN, y, 9, bold, MUTED); text('Dato', MARGIN + 34, y, 9, bold, MUTED)
-    text('Tekst', MARGIN + 110, y, 9, bold, MUTED); text('Kategori', MARGIN + 300, y, 9, bold, MUTED)
-    right('Beloeb', W - MARGIN, y, 9, bold, MUTED); y -= 6; hline(y); y -= 12
-    aaretsBilag.forEach(b => {
+    for (const k of oversigt.kolonner) {
+      const l = bilagLayout(k.id)
+      if (l.hoejre) right(k.label, W - MARGIN, y, 9, bold, MUTED)
+      else text(k.label, MARGIN + l.x, y, 9, bold, MUTED)
+    }
+    y -= 6; hline(y); y -= 12
+    for (const r of oversigt.raekker) {
       need(15)
-      const fortegn = b.type === 'indtaegt' ? '' : '-'
-      text(String(b.nummer), MARGIN, y, 10); text(b.dato || '', MARGIN + 34, y, 10)
-      text((b.tekst || '').slice(0, 34), MARGIN + 110, y, 10); text((b.kategori || '').slice(0, 20), MARGIN + 300, y, 10)
-      right(fortegn + kr2(b.beloeb), W - MARGIN, y, 10); y -= 15
-    })
+      for (const k of oversigt.kolonner) {
+        const l = bilagLayout(k.id)
+        const celle = r.celler[k.id] ?? ''
+        if (l.hoejre) right(celle, W - MARGIN, y, 10)
+        else text(l.maks ? celle.slice(0, l.maks) : celle, MARGIN + l.x, y, 10)
+      }
+      y -= 15
+    }
   }
 
   // ── Note ──
   need(60); y -= 6; hline(y); y -= 12
-  const note = 'Regnskabet er udarbejdet efter de almindelige skatteregler for udlejning til naertstaaende (foraeldrekoeb). Renteudgifter er personlige (kapitalindkomst) og indgaar ikke i udlejningsresultatet. Forbedringsudgifter er ikke fradragsberettigede. Beloeb er baseret paa de indtastede tal og skal verificeres mod bilag og skat.dk.'
-  wrapText(note, W - 2 * MARGIN, 8, font).forEach(l => { need(11); text(l, MARGIN, y, 8, font, MUTED); y -= 11 })
+  wrapText(opstilling.note, W - 2 * MARGIN, 8, font).forEach(l => { need(11); text(l, MARGIN, y, 8, font, MUTED); y -= 11 })
 
-  // ── Vedhaeftede bilag (billeder + PDF-sider) ──
-  for (const b of aaretsBilag) {
+  // ── Vedhæftede bilag (billeder + PDF-sider) ──
+  for (const b of bilag) {
     if (!b.filsti) continue
     let bytes
     try {
@@ -148,7 +148,7 @@ export async function genererRegnskabPdf({ year, saet, grundlag, persons, proper
         })
       } catch {
         const p = doc.addPage(A4)
-        p.drawText(safe(`Bilag ${b.nummer}: ${b.tekst || ''} (PDF kunne ikke indlejres - se separat fil ${b.filnavn})`), { x: MARGIN, y: H - MARGIN, size: 10, font, color: INK })
+        p.drawText(safe(`Bilag ${b.nummer}: ${b.tekst || ''} (PDF kunne ikke indlejres — se separat fil ${b.filnavn})`), { x: MARGIN, y: H - MARGIN, size: 10, font, color: INK })
       }
     }
   }

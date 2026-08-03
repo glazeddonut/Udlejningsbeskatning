@@ -226,8 +226,16 @@ table.data tr.total td { font-weight: 700; border-top: 2px solid var(--border); 
 .regnskab h3.rg-sektion { margin: 22px 0 6px; font-size: 15px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
 .regnskab table.rg { width: 100%; border-collapse: collapse; }
 .regnskab table.rg td { padding: 6px 0; border-bottom: 1px solid var(--border); }
-.regnskab table.rg td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.regnskab table.rg th {
+  padding: 0 0 6px; text-align: left; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.regnskab table.rg td.num, .regnskab table.rg th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .regnskab table.rg tr.sum td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+/* Hjemløs post: en værdi under en nøgle kontoplanen ikke kender. Den tælles med i
+   totalen, så den skal være synlig — ikke skjult og ikke en fejl (ADR-0001). */
+.regnskab table.rg tr.hjemloes td { font-style: italic; color: var(--text-muted); }
 .regnskab .rg-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
 
 @media print {
