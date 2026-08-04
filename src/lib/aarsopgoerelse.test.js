@@ -658,6 +658,30 @@ test('bilag med ukendt post samles i én markeret række — de forsvinder ikke 
   assert.equal(afstRaekke(o, 'udgifter.vedligeholdelse').status, 'stemmer', 'de øvrige poster afstemmes stadig')
 })
 
+// Rettevejen i Bilag-fanen (#19) sætter en post på et bilag der stod med ukendt post.
+// Det er afstemningen der skal mærke det: bilaget flytter fra den markerede række over
+// på sin egen post. Her måles KONSEKVENSEN — samme bilag (samme id, beløb og fil) før
+// og efter, så det eneste der skifter, er posten. Selve skrivningen — at posten sættes
+// og den bevarede kategori ryddes — er prøvet gennem endepunktet i server.test.js.
+test('et bilag der får sin post sat, flytter fra den ukendte række over på posten', () => {
+  const ukendt = { post_id: null, kategori: 'Ejerforening', beloeb: 5211 }
+  const foer = kald({ bilag: [bl(1, 2025, ukendt)] })
+  assert.equal(afstRaekke(foer, 'afstemning.ukendte').antal, 1)
+  assert.equal(afstRaekke(foer, 'udgifter.vedligeholdelse').status, 'ingen_bilag')
+
+  // Præcis det rettevejen skriver: posten sættes, og den bevarede kategori ryger med.
+  const efter = kald({ bilag: [bl(1, 2025, { post_id: 'udgifter.vedligeholdelse', beloeb: 5211 })] })
+  assert.equal(afstRaekke(efter, 'afstemning.ukendte'), undefined, 'den markerede række skal forsvinde')
+  const r = afstRaekke(efter, 'udgifter.vedligeholdelse')
+  assert.equal(r.antal, 1)
+  assert.equal(r.bilagssum, 5211)
+  assert.equal(r.status, 'stemmer')
+  // Bilaget står i oversigten begge gange — det er posten der ændrer sig, ikke bilaget.
+  assert.equal(foer.opstilling.bilagsoversigt.antal, 1)
+  assert.equal(efter.opstilling.bilagsoversigt.raekker[0].celler.nummer, '1')
+  assert.equal(efter.opstilling.bilagsoversigt.raekker[0].celler.post, 'Vedligeholdelse')
+})
+
 test('afstemningen gælder kun grundlaget faktisk — ved budget er den fraværende', () => {
   const medBilag = { bilag: [bl(1, 2025, { beloeb: 5211 })] }
   assert.ok(kald(medBilag, 2025, 'faktisk').opstilling.afstemning)

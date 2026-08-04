@@ -56,8 +56,9 @@ const POST_FOR_KATEGORI_EFTER_TYPE = Object.freeze({
 // Postens id for en gammel kategoritekst — null hvis den ikke kan oversættes.
 // Null er ikke et nederlag: kategorien bevares på bilaget og vises markeret, så
 // oplysningen ikke går tavst tabt. At gætte en post ville være værre end at lade
-// den stå åben. (Selve rettevejen i UI'et — at vælge posten på et eksisterende
-// bilag — findes endnu ikke; bilaget kan kun slettes og lægges ind igen.)
+// den stå åben. Rettevejen står i Bilag-fanen: postcellen på et bilag med ukendt post
+// bærer en vælger, og PUT /api/bilag/:id sætter posten og rydder den bevarede kategori
+// (#19). Bilaget skal altså hverken slettes eller lægges ind igen for at blive rettet.
 export function postIdForKategori(kategori, type) {
   const k = String(kategori ?? '').trim().toLowerCase()
   if (!k) return null

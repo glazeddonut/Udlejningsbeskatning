@@ -23,8 +23,12 @@ genererer et **årsregnskab som PDF (med bilag)**.
 - **Dev:** `npm run dev` → Vite på **5174** (hot-reload) + Express på **3002**.
   Vite proxyer `/api` til 3002. (Portene valgt for ikke at kollidere med
   FormueFremskrivning på 5173/3001.)
-- **Test:** `npm test` (node --test; 271 tests i `src/lib/*.test.js`). Ingen
-  React-testinfrastruktur — bevidst valg. Komponenter verificeres i browseren.
+- **Test:** `npm test` (node --test; 285 tests). De rene regnetests ligger i
+  `src/lib/*.test.js`; `server.test.js` kører Express-appen i processen mod en
+  midlertidig DB-fil og fastholder at hvert skriveendepunkt kalder sin validator
+  (server.js eksporterer derfor `app` og binder først porten når filen køres som
+  program). Ingen React-testinfrastruktur — bevidst valg. Komponenter verificeres
+  i browseren.
 - **Produktion:** `npm run build` → `npm start` (Express serverer `dist/` på 3002).
 - **Docker:** `cp docker-compose.yml.example docker-compose.yml` → `docker compose up -d --build`
   (data + bilag på named volume `udlejning-data`, mountet på `/data`).

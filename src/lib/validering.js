@@ -218,7 +218,6 @@ export function validerIndstillinger(settings) {
   if (settings === null || settings === undefined) return ja
   if (!erObjekt(settings)) return nej(tjekObjekt(settings, 'indstillingerne'))
   return svarPaa(
-    tjekAarstal(settings.feltmapping_aar, 'feltmapping-året'),
     tjekTal(settings.gaveafgift_bundgraense, 'gaveafgiftens bundgrænse'),
     tjekPct(settings.markedsleje_advarsel_pct, 'markedsleje-advarslen'),
     tjekTal(settings.beskattet_person_id, 'id på den beskattede ægtefælle'),

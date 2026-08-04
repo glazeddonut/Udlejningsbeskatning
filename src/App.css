@@ -258,6 +258,14 @@ table.data tr.total td { font-weight: 700; border-top: 2px solid var(--border); 
    Beslægtet med den hjemløse post ovenfor, men ikke det samme begreb: den ene
    handler om et bilag, den anden om en værdi i et talsæt. */
 table.data td.ukendt-post { font-style: italic; color: var(--text-muted); }
+/* Rettevejen (#19): vælgeren står i den celle der er forkert, under den bevarede
+   kategoritekst, så teksten kan læses mens man vælger. Den holdes bevidst mindre end
+   formularernes felter — en tabelrække skal ikke se ud som en formular — og skriver
+   ikke kursiven videre til sine egne valgmuligheder. */
+table.data td.ukendt-post .ret-post { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+table.data td.ukendt-post .ret-post select {
+  width: auto; max-width: 220px; padding: 5px 8px; font-size: 13px; font-style: normal;
+}
 .regnskab .rg-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
 
 /* ── Afstemningen: bilagssum mod indtastet årsbeløb (ADR-0005) ──

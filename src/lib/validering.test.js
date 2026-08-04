@@ -279,14 +279,26 @@ test('et gemt bilag med en ukendt post kan gemmes igen', () => {
   assert.equal(validerBilag({ beloeb: 100, post_id: 'udgifter.ejerforening' }, gemt).ok, true)
 })
 
+// Modstykket til ADR-0006: værnet må tolerere den gemte ukendte post — men det er
+// rettevejen (#19) der er meningen med tolerancen. Sætter brugeren en KENDT post på et
+// bilag der står med ukendt post, skal skrivningen slippe igennem, uanset om bilaget
+// stod med `post_id: null` og en bevaret kategori eller med et id der er drevet væk.
+test('en kendt post kan sættes på et bilag der står med en ukendt post', () => {
+  const bevaret = { id: 7, aar: 2025, post_id: null, kategori: 'Ejerforening', beloeb: 1200 }
+  assert.deepEqual(validerBilag({ post_id: 'udgifter.faellesudgifter' }, bevaret), { ok: true, begrundelse: '' })
+  const drevet = { id: 8, aar: 2025, post_id: 'udgifter.ejerforening', beloeb: 1200 }
+  assert.equal(validerBilag({ post_id: 'udgifter.faellesudgifter' }, drevet).ok, true)
+  // Og rettelsen må ikke kunne gå den anden vej — til en post der heller ikke findes.
+  assert.equal(validerBilag({ post_id: 'udgifter.ejerforening' }, bevaret).ok, false)
+})
+
 // ── Indstillinger (PUT /api/settings) ─────────────────────────────────────────
 
 test('indstillingernes tal accepteres og afvises på samme regel', () => {
-  const s = { feltmapping_aar: 2026, gaveafgift_bundgraense: 76900, markedsleje_advarsel_pct: 5, beskattet_person_id: null }
+  const s = { gaveafgift_bundgraense: 76900, markedsleje_advarsel_pct: 5, beskattet_person_id: null }
   assert.deepEqual(validerIndstillinger(s), { ok: true, begrundelse: '' })
   assert.match(validerIndstillinger({ ...s, gaveafgift_bundgraense: 'ingen' }).begrundelse, /bundgrænse/i)
   assert.match(validerIndstillinger({ ...s, markedsleje_advarsel_pct: 150 }).begrundelse, /markedsleje/i)
-  assert.match(validerIndstillinger({ ...s, feltmapping_aar: 'i år' }).begrundelse, /årstal/i)
 })
 
 // ── De data der allerede ligger på disken ─────────────────────────────────────
