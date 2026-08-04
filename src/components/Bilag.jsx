@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api.js'
 import { bilagForAar, bilagPost } from '../lib/bilag.js'
-import { KONTOPLAN, posterIGruppe } from '../lib/kontoplan.js'
+import { KONTOPLAN, posterIGruppe, findPostId } from '../lib/kontoplan.js'
 import { kr2 } from '../lib/format.js'
-import { TextField, NumberField, SelectField } from './fields.jsx'
+import { TextField, NumberField, SelectField, Valgmuligheder } from './fields.jsx'
 
 // Postvælgeren bygges af kontoplanen — ikke af en liste her i komponenten. Et bilag og
 // en regnskabslinje skal være det samme begreb, ellers kan de to aldrig afstemmes
@@ -144,6 +144,55 @@ function UploadForm({ aar, onDone }) {
   )
 }
 
+// Rettevejen for et bilag med ukendt post (#19).
+//
+// Den bor i den celle der ER forkert — postcellen — og kun så længe den er det:
+// vælgeren dukker op, når kontoplanen ikke kender bilagets post, og er væk igen i det
+// øjeblik posten er sat. En redigeringstilstand for hele rækken eller en dialog ville
+// bygge en generel bilagseditor, som hverken issuet eller fanen (en liste med download
+// og slet) beder om, og en vælger på HVER række ville gøre listen til en formular.
+//
+// Den bevarede kategoritekst bliver stående, mens man vælger — den er det eneste spor
+// af hvad bilaget dokumenterer, og dermed det man vælger UD FRA. Den ryger på serveren
+// i samme øjeblik posten sættes, så bilaget ikke bærer to sandheder; derfor spørges der
+// først, og teksten står i selve spørgsmålet. Alt andet på bilaget — nummeret, filen,
+// beløbet — er rettelsen uvedkommende: der sendes kun posten.
+function RetPost({ b, markeretTekst, onDone }) {
+  const [gemmer, setGemmer] = useState(false)
+  const [fejl, setFejl] = useState('')
+
+  const vaelg = async (post_id) => {
+    // Posten slås op i kontoplanen selv — ikke i vælgerens egne valgmuligheder.
+    // Kontoplanen er den ene kilde til sandhed om hvad en post hedder.
+    const valgt = findPostId(post_id)
+    if (!valgt) return
+    const spoergsmaal = `Bogfør bilag ${b.nummer} på “${valgt.label}”?`
+      + (markeretTekst ? `\n\nBilaget står i dag som “${markeretTekst}”. Den tekst fjernes, når posten er sat.` : '')
+    if (!confirm(spoergsmaal)) return
+    setGemmer(true); setFejl('')
+    try {
+      await api.put(`/bilag/${b.id}`, { post_id })
+      await onDone()
+    } catch (e) {
+      setFejl(e.message || 'Kunne ikke gemme posten.')
+    } finally {
+      setGemmer(false)
+    }
+  }
+
+  return (
+    <div className="ret-post">
+      {markeretTekst && <span>{markeretTekst}</span>}
+      <select value="" disabled={gemmer} aria-label={`Vælg post for bilag ${b.nummer}`}
+        onChange={e => vaelg(e.target.value)}>
+        <option value="">{gemmer ? 'Gemmer…' : '— vælg post —'}</option>
+        <Valgmuligheder options={POSTER} />
+      </select>
+      {fejl && <span className="badge warn">{fejl}</span>}
+    </div>
+  )
+}
+
 function BilagRow({ b, onDone }) {
   const erBillede = (b.mimetype || '').startsWith('image/')
   // Kender kontoplanen ikke posten, vises den bevarede kategori markeret — den må
@@ -158,7 +207,9 @@ function BilagRow({ b, onDone }) {
       <td>{b.nummer}</td>
       <td>{b.dato}</td>
       <td>{b.tekst}</td>
-      <td className={post.kendt ? undefined : 'ukendt-post'}>{post.label}</td>
+      <td className={post.kendt ? undefined : 'ukendt-post'}>
+        {post.kendt ? post.label : <RetPost b={b} markeretTekst={post.label} onDone={onDone} />}
+      </td>
       <td className="num">{kr2(b.beloeb)}</td>
       <td>
         {b.filsti ? (

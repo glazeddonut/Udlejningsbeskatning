@@ -20,7 +20,7 @@
 
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -36,11 +36,21 @@ const FIXTUR = {
     { id: 2, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 },
   ],
   years: [{ id: 1, aar: 2025, budget: {}, faktisk: {} }],
-  bilag: [{ id: 1, aar: 2025, dato: '2025-09-01', tekst: 'Grundskyld', beloeb: 1000, post_id: 'udgifter.grundskyld', type: 'udgift', filnavn: '', mimetype: '', filsti: null }],
+  // Bilag 2 bærer en gammel kategori kontoplanen ikke kan oversætte — altså en ukendt
+  // post, med en fil på disken. Tilstanden opstår ikke i brugerens egne data, og den
+  // skal derfor konstrueres her for at rettevejen (#19) kan prøves gennem døren.
+  bilag: [
+    { id: 1, aar: 2025, dato: '2025-09-01', tekst: 'Grundskyld', beloeb: 1000, post_id: 'udgifter.grundskyld', type: 'udgift', filnavn: '', mimetype: '', filsti: null },
+    { id: 2, aar: 2025, dato: '2025-10-01', tekst: 'Ejerforening', beloeb: 1200, kategori: 'Ejerforening', type: 'udgift', filnavn: 'ejerforening.pdf', mimetype: 'application/pdf', filsti: '2.pdf' },
+  ],
   settings: {},
   field_mappings: {},
-  nextPersonId: 2, nextLoanId: 2, nextLeaseId: 3, nextYearId: 2, nextBilagId: 2,
+  nextPersonId: 2, nextLoanId: 2, nextLeaseId: 3, nextYearId: 2, nextBilagId: 3,
 }
+
+// Indholdet af bilag 2's fil. Den skrives til BILAG_DIR i before() og læses igen efter
+// rettelsen — det er sådan "filen er uændret" kan påstås om andet end en sti.
+const BILAGSFIL = Buffer.from('%PDF-1.4 en kvittering fra ejerforeningen\n', 'utf8')
 
 // Ét afvist kald pr. række: `rute` er ruten som appen har registreret den (den
 // optælles til sidst), `url` er den konkrete adresse, og `krop` er forkert på præcis
@@ -142,6 +152,8 @@ before(async () => {
   // server.js læser DB_PATH og BILAG_DIR ved indlæsning — de skal stå før importen.
   process.env.DB_PATH = dbSti
   process.env.BILAG_DIR = join(mappe, 'bilag')
+  mkdirSync(process.env.BILAG_DIR, { recursive: true })
+  writeFileSync(join(process.env.BILAG_DIR, '2.pdf'), BILAGSFIL)
   ;({ app } = await import('./server.js'))
   server = app.listen(0)
   await new Promise((klar) => server.once('listening', klar))
@@ -158,6 +170,7 @@ const skriv = (metode, url, krop) => fetch(`${adresse}${url}`, {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(krop),
 })
+const hent = async (url) => (await fetch(`${adresse}${url}`)).json()
 
 for (const endepunkt of SKRIVEENDEPUNKTER) {
   test(`${endepunkt.metode} ${endepunkt.url} afviser en krop der ikke har domænets form`, async () => {
@@ -175,9 +188,43 @@ for (const endepunkt of SKRIVEENDEPUNKTER) {
 test('gyldige tal slipper igennem og bliver gemt', async () => {
   const svar = await skriv('PUT', '/api/settings', { gaveafgift_bundgraense: 80000 })
   assert.equal(svar.status, 200)
-  const hentet = await (await fetch(`${adresse}/api/settings`)).json()
+  const hentet = await hent('/api/settings')
   assert.equal(hentet.gaveafgift_bundgraense, 80000)
   assert.equal(JSON.parse(readFileSync(dbSti, 'utf8')).settings.gaveafgift_bundgraense, 80000)
+})
+
+// Rettevejen for en ukendt post (#19), gennem den dør brugerfladen selv går igennem.
+// Det testen skal fastholde er PRISEN ved rettelsen: den må ikke koste bilagsnummeret
+// eller filen — det var netop den pris "slet og læg ind igen" havde, og som gjorde
+// rettevejen nødvendig. Nummeret udledes af årets liste (src/lib/bilag.js) og filen
+// ligger på disken, så ingen af delene kan læses af PUT-svaret alene: begge hentes
+// gennem deres egne endepunkter før og efter.
+test('en ukendt post kan rettes uden at bilaget mister sit nummer eller sin fil', async () => {
+  const hentBilag = async (id) => (await hent('/api/bilag?aar=2025')).find(b => b.id === id)
+  const hentFil = async (id) =>
+    Buffer.from(await (await fetch(`${adresse}/api/bilag/${id}/fil`)).arrayBuffer())
+
+  const foer = await hentBilag(2)
+  assert.equal(foer.post_id, null, 'kategorien kunne ikke oversættes — posten står åben')
+  assert.equal(foer.kategori, 'Ejerforening', 'den bevarede kategori er der at vælge ud fra')
+  assert.equal(foer.nummer, 2)
+  assert.deepEqual(await hentFil(2), BILAGSFIL)
+
+  const svar = await skriv('PUT', '/api/bilag/2', { post_id: 'udgifter.faellesudgifter' })
+  assert.equal(svar.status, 200)
+
+  const efter = await hentBilag(2)
+  assert.equal(efter.post_id, 'udgifter.faellesudgifter', 'posten skal være sat')
+  assert.equal(efter.kategori, undefined, 'den bevarede kategori må ikke blive stående som en anden sandhed')
+  assert.equal(efter.nummer, 2, 'nummeret er årets liste — en rettelse omnummererer ikke')
+  assert.equal(efter.beloeb, 1200)
+  assert.equal(efter.tekst, 'Ejerforening')
+  assert.equal(efter.filsti, foer.filsti)
+  assert.deepEqual(await hentFil(2), BILAGSFIL, 'filen skal være den samme, ikke bare en sti der ligner')
+  // Og det hele skal stå på disken, ikke kun i svaret.
+  const paaDisken = JSON.parse(readFileSync(dbSti, 'utf8')).bilag.find(b => b.id === 2)
+  assert.equal(paaDisken.post_id, 'udgifter.faellesudgifter')
+  assert.equal(paaDisken.kategori, undefined)
 })
 
 // Og det der ikke kan læses ud af et enkelt kald: at tabellen ovenfor er udtømmende.
