@@ -23,7 +23,8 @@ genererer et **årsregnskab som PDF (med bilag)**.
 - **Dev:** `npm run dev` → Vite på **5174** (hot-reload) + Express på **3002**.
   Vite proxyer `/api` til 3002. (Portene valgt for ikke at kollidere med
   FormueFremskrivning på 5173/3001.)
-- **Test:** `npm test` (node --test; 34 rene regnetests i `src/lib/*.test.js`).
+- **Test:** `npm test` (node --test; 271 tests i `src/lib/*.test.js`). Ingen
+  React-testinfrastruktur — bevidst valg. Komponenter verificeres i browseren.
 - **Produktion:** `npm run build` → `npm start` (Express serverer `dist/` på 3002).
 - **Docker:** `cp docker-compose.yml.example docker-compose.yml` → `docker compose up -d --build`
   (data + bilag på named volume `udlejning-data`, mountet på `/data`).
@@ -108,12 +109,33 @@ måneder), `renteudgifter` (pr. lån), `udlejet_andel_pct`, `naertstaaende`.
 
 ## Kernemoduler (src/lib)
 
+- `aarsopgoerelse.js` — **ÉN INDGANG.** Rå db-former ind (år, lejekontrakter, personer,
+  ejendom, lån, indstillinger, bilag), domæneformede data ud: opstilling, personopgørelse,
+  dagstal, periodeflag. Talsættet normaliseres ét sted — her. Både skærmregnskabet og
+  PDF'en går denne vej; ingen af dem normaliserer selv. Se ADR-0004.
+- `kontoplan.js` — **kontoplanen ét sted.** 15 poster med `id` (= `gruppe.noegle`), dansk
+  label, gruppe, hint, `ejendomspost`, `summerbar`. Erstatter fem tidligere kopier.
 - `beregning.js` — resultat, §25 A-fordeling (`personOpgoerelse`), periode/pro rata
-  (`udlejningsdage`, `prorataMaaneder`, `effektivBeloeb`), markedsleje, rente-skøn. Testet.
-- `feltmapping.js` — skat.dk-feltmapping (rolle-afhængig, verificeret). Testet.
-- `saet.js` — normalisering af talsæt. `format.js` — kr/decimal-formatering + parsing.
-- `pdf.js` — regnskabs-PDF via **pdf-lib** (resultatopgørelse + bilagsliste + indlejrede
-  billeder + fletede PDF-bilag).
+  (`udlejningsdage`, `udlejningsdage360`, `prorataMaaneder`, `effektivBeloeb`),
+  `fradragsBeloeb` (udlejet andel på ejendomsposter), årsvalidering (`maaAarOprettes`,
+  `aarsinterval`), `renteskoen`, markedsleje. Testet.
+- `bilag.js` — bilagsnummerering (udledt, aldrig gemt), `bilagssummer` til afstemningen,
+  migrering af gamle kategorier til kontoplanens poster.
+- `validering.js` — afviser skrivninger uden domæneform. Rene funktioner; `server.js`
+  udfører dem. Se ADR-0006.
+- `feltmapping.js` — skat.dk-feltmapping (rolle-afhængig, verificeret). `hentFeltmapping`
+  returnerer felterne **sammen med deres herkomst**, så en flade ikke kan vise feltnumre
+  uden at kunne skrive hvilket år de er fra.
+- `saet.js` — normalisering af talsæt. `format.js` — kr/decimal-formatering,
+  `indtastetTal` (tomt felt = `null`, uoplyst ≠ 0; se ADR-0008).
+- `pdf.js` — regnskabs-PDF via **pdf-lib**. Kun pdf-lib-viden; indholdet kommer fra
+  `aarsopgoerelse`s opstilling. WinAnsi koder æøå fint — kun få tegn skal erstattes.
+
+## Arkitektur-beslutninger
+
+`CONTEXT.md` i repo-roden er domæneordbogen; `docs/adr/` bærer de beslutninger der er
+svære at vende. **Læs de relevante ADR'er før du ændrer noget i det område de dækker** —
+flere af dem findes, fordi en tidligere implementation gættede et tal der så legitimt ud.
 
 ## Vigtige domæne-detaljer
 
