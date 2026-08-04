@@ -2,6 +2,12 @@ import express from 'express'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join, extname } from 'path'
+import { bilagForAar, medBilagsnumre, migrerBilag } from './src/lib/bilag.js'
+import { maaAarOprettes, saetTilNytAar } from './src/lib/beregning.js'
+import {
+  validerAar, validerEjendom, validerLaan, validerLejekontrakt,
+  validerBilag, validerIndstillinger, validerFeltmappinger,
+} from './src/lib/validering.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // DB-sti kan overrides med env var (peg på en persistent volume i container)
@@ -14,7 +20,11 @@ if (!existsSync(BILAG_DIR)) mkdirSync(BILAG_DIR, { recursive: true })
 // Den juridiske vejledning pr. år før de bruges — se README + Indstillinger.
 const DEFAULT_SETTINGS = {
   skatteordning: 'almindelige',      // forældrekøb kun til nærtstående → almindelige regler
-  feltmapping_aar: 2026,             // hvilket års default-feltmapping der bruges
+  // Her stod tidligere `feltmapping_aar`. Feltmappingen slås op på det år brugeren har
+  // valgt, og Skatteindberetningen skriver selv hvilket års feltnumre der faktisk blev
+  // brugt — en indstilling oveni kunne kun pege et andet sted hen end virkeligheden.
+  // Ældre DB'er kan stadig bære nøglen; loadDb sletter den ved indlæsning. (Bemærk:
+  // validerIndstillinger tjekker den fortsat — et tomt tjek nu, som ryddes særskilt.)
   gaveafgift_bundgraense: 76900,     // kr. pr. giver pr. modtager (VERIFICÉR pr. år)
   markedsleje_advarsel_pct: 5,       // advar hvis aftalt leje er > X% under markedsleje
   fordeling_mode: 'alt_paa_en',      // 'alt_paa_en' (§25 A) | 'del' (§25 A stk. 8)
@@ -24,10 +34,12 @@ const DEFAULT_SETTINGS = {
 const emptyDb = () => ({
   persons: [],          // { id, navn, cpr, rolle: 'udlejer' | 'medejer' }
   property: null,       // singleton
-  loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse{} }
+  loans: [],            // { id, type, laangiver, hovedstol, restgaeld, restgaeld_dato, startdato, rente_pct, haeftelse{} }
   leases: [],           // lejekontrakter til datteren (én aktiv pr. år) { id, startdato, slutdato, maanedlig_leje, ... }
   years: [],            // { id, aar, budget:{...}, faktisk:{...} }
-  bilag: [],            // { id, aar, nummer, dato, tekst, beloeb, kategori, type, filnavn, mimetype, filsti }
+  bilag: [],            // { id, aar, dato, tekst, beloeb, post_id, type, filnavn, mimetype, filsti }
+                        // (post_id = id på en post i kontoplanen; nummeret gemmes ikke —
+                        //  det udledes af årets liste, se src/lib/bilag.js)
   settings: { ...DEFAULT_SETTINGS },
   field_mappings: {},   // overrides: { "2026-forskud": [ {felt_nr,label,kilde} ] }; tom = brug defaults i frontend
   nextPersonId: 1,
@@ -49,6 +61,15 @@ function loadDb() {
     if (db.property === undefined) db.property = null
     if (!db.field_mappings) db.field_mappings = {}
     if (!db.bilag) db.bilag = []
+    // Ryd gamle, gemte bilagsnumre. De blev overskrevet ved læsning i forvejen og var
+    // derfor allerede forkerte på disken; nummeret udledes nu ét sted (src/lib/bilag.js).
+    // Ikke en migrering der skal til for at serveres korrekt — den fjerner den anden sandhed.
+    for (const b of db.bilag) delete b.nummer
+    // Migrér bilagets frie kategoritekst til en post i kontoplanen (ADR-0005).
+    // Oversættelsen selv ligger i src/lib/bilag.js, hvor den kan testes rent; her
+    // udføres den, så den skrives med på disken ved næste gemning — som lease→leases.
+    // Kan en kategori ikke oversættes, bevares den og markeres frem for at gå tabt.
+    db.bilag = migrerBilag(db.bilag)
     if (!db.nextPersonId) db.nextPersonId = 1
     if (!db.nextLoanId) db.nextLoanId = 1
     if (!db.nextYearId) db.nextYearId = 1
@@ -61,6 +82,10 @@ function loadDb() {
 
     // Merge settings med defaults (tilføjer nye nøgler hvis de mangler)
     db.settings = { ...DEFAULT_SETTINGS, ...(db.settings ?? {}) }
+    // Fjern det udgåede feltmapping-år. Det var en anden sandhed ved siden af det år
+    // brugeren faktisk står i, og ingen læste det længere — samme slags oprydning som
+    // bilagenes gemte numre ovenfor: nøglen bliver ikke stående og lyver på disken.
+    delete db.settings.feltmapping_aar
 
     return db
   } catch { return emptyDb() }
@@ -69,6 +94,18 @@ function loadDb() {
 function saveDb(db) {
   writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8')
 }
+
+// Skriveendepunkterne afviser data der ikke har domænets form — beløb der ikke er tal,
+// datoer der ikke er datoer, poster kontoplanen ikke kender — med en dansk begrundelse
+// frem for at gemme dem. Reglerne selv er rene funktioner i src/lib/validering.js, så
+// de kan testes uden at starte en server; her udføres de, ét sted pr. endepunkt.
+// Værnet gælder ENHVER klient, ikke kun brugerfladen: et fremtidigt endepunkt eller en
+// klient med en fejl skriver gennem de samme døre.
+//
+// Det dækker de endepunkter der bærer et tal eller en dato: år, ejendom, lån,
+// lejekontrakter, bilag, indstillinger og feltmappingens nøgler. Kun personer står
+// uden for — de bærer hverken tal eller datoer, kun navn, cpr og rolle.
+const afvis = (res, svar) => res.status(400).json({ error: svar.begrundelse })
 
 const app = express()
 app.use(express.json({ limit: '25mb' }))   // bilag sendes som base64 → større limit
@@ -110,6 +147,8 @@ app.get('/api/property', (req, res) => {
 })
 app.put('/api/property', (req, res) => {
   const db = loadDb()
+  const svar = validerEjendom(req.body)
+  if (!svar.ok) return afvis(res, svar)
   db.property = req.body ?? null
   saveDb(db)
   res.json(db.property)
@@ -121,7 +160,9 @@ app.get('/api/loans', (req, res) => {
 })
 app.post('/api/loans', (req, res) => {
   const db = loadDb()
-  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse } = req.body
+  const svar = validerLaan(req.body)
+  if (!svar.ok) return afvis(res, svar)
+  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, startdato, rente_pct, haeftelse } = req.body
   const loan = {
     id: db.nextLoanId++,
     type: type ?? 'realkredit',
@@ -129,6 +170,7 @@ app.post('/api/loans', (req, res) => {
     hovedstol: hovedstol ?? 0,
     restgaeld: restgaeld ?? 0,
     restgaeld_dato: restgaeld_dato ?? '',   // peildato for restgælden (fx bankens 31/12-indberetning)
+    startdato: startdato ?? '',             // hvornår lånet blev optaget — styrer renteskønnet i optagelsesåret
     rente_pct: rente_pct ?? 0,
     haeftelse: haeftelse ?? {},   // { personId: pct }
   }
@@ -138,11 +180,14 @@ app.post('/api/loans', (req, res) => {
 })
 app.put('/api/loans/:id', (req, res) => {
   const db = loadDb()
-  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, rente_pct, haeftelse } = req.body
+  const svar = validerLaan(req.body)
+  if (!svar.ok) return afvis(res, svar)
+  const { type, laangiver, hovedstol, restgaeld, restgaeld_dato, startdato, rente_pct, haeftelse } = req.body
   const l = db.loans.find(l => l.id === Number(req.params.id))
   if (l) {
     l.type = type; l.laangiver = laangiver; l.hovedstol = hovedstol
     l.restgaeld = restgaeld; l.restgaeld_dato = restgaeld_dato ?? ''
+    l.startdato = startdato ?? ''
     l.rente_pct = rente_pct; l.haeftelse = haeftelse ?? {}
   }
   saveDb(db)
@@ -161,6 +206,8 @@ app.get('/api/leases', (req, res) => {
 })
 app.post('/api/leases', (req, res) => {
   const db = loadDb()
+  const svar = validerLejekontrakt(req.body)
+  if (!svar.ok) return afvis(res, svar)
   const lease = { id: db.nextLeaseId++, ...(req.body ?? {}) }
   db.leases.push(lease)
   saveDb(db)
@@ -168,6 +215,8 @@ app.post('/api/leases', (req, res) => {
 })
 app.put('/api/leases/:id', (req, res) => {
   const db = loadDb()
+  const svar = validerLejekontrakt(req.body)
+  if (!svar.ok) return afvis(res, svar)
   const idx = db.leases.findIndex(l => l.id === Number(req.params.id))
   if (idx !== -1) db.leases[idx] = { ...db.leases[idx], ...(req.body ?? {}), id: db.leases[idx].id }
   saveDb(db)
@@ -188,20 +237,26 @@ app.post('/api/years', (req, res) => {
   const db = loadDb()
   const { aar, budget, faktisk } = req.body
   const aarN = Number(aar)
+  // Lejekontrakterne afgør hvilke år der kan oprettes — reglen selv bor i
+  // beregningslaget, så serveren og klienten svarer med samme tekst (ADR-0002).
+  const svar = maaAarOprettes(db.leases, aarN)
+  if (!svar.ok) return afvis(res, svar)
   if (db.years.find(y => y.aar === aarN))
     return res.status(400).json({ error: 'Året findes allerede' })
-  // Lejekontrakterne afgør hvilke år der kan oprettes: tidligste start → seneste slut.
-  const starter = db.leases.map(l => l.startdato).filter(Boolean)
-  const slutter = db.leases.map(l => l.slutdato).filter(Boolean)
-  const minAar = starter.length ? Math.min(...starter.map(d => Number(d.slice(0, 4)))) : null
-  // Åben slutdato på mindst én kontrakt → ingen øvre grænse.
-  const aabenSlut = db.leases.length > 0 && slutter.length < db.leases.length
-  const maxAar = aabenSlut || !slutter.length ? null : Math.max(...slutter.map(d => Number(d.slice(0, 4))))
-  if (minAar !== null && aarN < minAar)
-    return res.status(400).json({ error: `Lejekontrakterne starter i ${minAar} — tidligere år kan ikke oprettes` })
-  if (maxAar !== null && aarN > maxAar)
-    return res.status(400).json({ error: `Lejemålet slutter i ${maxAar} — senere år kan ikke oprettes` })
-  const year = { id: db.nextYearId++, aar: Number(aar), budget: budget ?? {}, faktisk: faktisk ?? {} }
+  // Et nyt år har ingen gemte hjemløse poster at bære med sig — det fødes af
+  // kontoplanen, og en post kontoplanen ikke kender kan derfor ikke være legitim her.
+  const form = validerAar(req.body)
+  if (!form.ok) return afvis(res, form)
+  // Årets udlejningsperiode udledes af lejekontrakten HER, frem for at året fødes med
+  // det talsæt klienten måtte have sendt. Et år oprettet direkte mod API'et får derfor
+  // også sin periode — også når kalderen sender et tomt talsæt (ADR-0002). Hvert
+  // grundlag gøres op for sig, så budget og faktisk ikke deler tal.
+  const kontekst = { leases: db.leases, property: db.property, loans: db.loans, aar: aarN }
+  const year = {
+    id: db.nextYearId++, aar: aarN,
+    budget: saetTilNytAar(kontekst, budget),
+    faktisk: saetTilNytAar(kontekst, faktisk),
+  }
   db.years.push(year)
   saveDb(db)
   res.json(year)
@@ -210,6 +265,11 @@ app.put('/api/years/:id', (req, res) => {
   const db = loadDb()
   const { aar, budget, faktisk } = req.body
   const y = db.years.find(y => y.id === Number(req.params.id))
+  // Året som det står gemt er det eneste sted en hjemløs post kan komme fra: bærer
+  // årets talsæt allerede en nøgle kontoplanen ikke kender, kan den gemmes igen
+  // (ADR-0001) — en ny af slagsen kan ikke.
+  const svar = validerAar(req.body, y)
+  if (!svar.ok) return afvis(res, svar)
   if (y) {
     if (aar !== undefined) y.aar = Number(aar)
     if (budget !== undefined) y.budget = budget
@@ -231,6 +291,8 @@ app.get('/api/settings', (req, res) => {
 })
 app.put('/api/settings', (req, res) => {
   const db = loadDb()
+  const svar = validerIndstillinger(req.body)
+  if (!svar.ok) return afvis(res, svar)
   db.settings = { ...db.settings, ...req.body }
   saveDb(db)
   res.json(db.settings)
@@ -242,6 +304,8 @@ app.get('/api/field-mappings', (req, res) => {
 })
 app.put('/api/field-mappings', (req, res) => {
   const db = loadDb()
+  const svar = validerFeltmappinger(req.body)
+  if (!svar.ok) return afvis(res, svar)
   db.field_mappings = req.body ?? {}
   saveDb(db)
   res.json(db.field_mappings)
@@ -249,26 +313,19 @@ app.put('/api/field-mappings', (req, res) => {
 
 // ── Bilag ────────────────────────────────────────────
 // Liste (metadata only; filsti udelades ikke, men filen hentes separat).
-// Bilag nummereres gapfrit 1..n pr. år i oprettelsesrækkefølge (id) — beregnet ved
-// læsning, så et slettet bilag ikke efterlader et "hul" i listen og regnskabs-PDF'en.
-function medLoebenummer(bilagListe) {
-  const tael = {}
-  return [...bilagListe]
-    .sort((a, b) => a.id - b.id)
-    .map(b => ({ ...b, nummer: (tael[b.aar] = (tael[b.aar] || 0) + 1) }))
-}
-
+// Nummereringen ligger i src/lib/bilag.js — se dér for hvorfor nummeret beregnes
+// ved læsning og aldrig gemmes.
 app.get('/api/bilag', (req, res) => {
-  const aar = req.query.aar ? Number(req.query.aar) : null
-  let liste = medLoebenummer(loadDb().bilag)
-  if (aar) liste = liste.filter(b => b.aar === aar)
-  res.json(liste)
+  const db = loadDb()
+  res.json(req.query.aar ? bilagForAar(db.bilag, req.query.aar) : medBilagsnumre(db.bilag))
 })
 
 // Upload: fil sendes som base64 (data-URL eller ren base64) i JSON-body.
 app.post('/api/bilag', (req, res) => {
   const db = loadDb()
-  const { aar, dato, tekst, beloeb, kategori, type, filnavn, mimetype, data } = req.body
+  const svar = validerBilag(req.body)
+  if (!svar.ok) return afvis(res, svar)
+  const { aar, dato, tekst, beloeb, post_id, type, filnavn, mimetype, data } = req.body
   const id = db.nextBilagId++
   let filsti = null
   if (data) {
@@ -277,16 +334,17 @@ app.post('/api/bilag', (req, res) => {
     filsti = `${id}${ext}`   // filnavn udledes af id — ingen path traversal fra brugerinput
     writeFileSync(join(BILAG_DIR, filsti), Buffer.from(base64, 'base64'))
   }
-  const nummer = Math.max(0, ...db.bilag.filter(b => b.aar === Number(aar)).map(b => b.nummer || 0)) + 1
+  // Intet `nummer` gemmes — det udledes af årets liste ved læsning (src/lib/bilag.js).
   const bilag = {
-    id, aar: Number(aar), nummer,
+    id, aar: Number(aar),
     dato: dato ?? '', tekst: tekst ?? '', beloeb: beloeb ?? 0,
-    kategori: kategori ?? '', type: type ?? 'udgift',
+    post_id: post_id ?? null, type: type ?? 'udgift',
     filnavn: filnavn ?? '', mimetype: mimetype ?? '', filsti,
   }
   db.bilag.push(bilag)
   saveDb(db)
-  res.json(bilag)
+  // Svar med bilaget som det serveres — altså med det udledte nummer.
+  res.json(bilagForAar(db.bilag, bilag.aar).find(b => b.id === id))
 })
 
 // Hent selve filen (til preview i UI og til PDF-generering).
@@ -302,12 +360,18 @@ app.get('/api/bilag/:id/fil', (req, res) => {
 app.put('/api/bilag/:id', (req, res) => {
   const db = loadDb()
   const b = db.bilag.find(x => x.id === Number(req.params.id))
+  // Bilaget som det står gemt: bærer det en post kontoplanen ikke kender — en gammel
+  // kategori der ikke kunne oversættes — må den gemmes igen frem for at gå tabt.
+  const svar = validerBilag(req.body, b)
+  if (!svar.ok) return afvis(res, svar)
   if (b) {
-    const { dato, tekst, beloeb, kategori, type } = req.body
+    const { dato, tekst, beloeb, post_id, type } = req.body
     if (dato !== undefined) b.dato = dato
     if (tekst !== undefined) b.tekst = tekst
     if (beloeb !== undefined) b.beloeb = beloeb
-    if (kategori !== undefined) b.kategori = kategori
+    // Vælges en post, ryger den bevarede (uoversættelige) kategori — ellers ville
+    // bilaget bære to sandheder om hvad det dokumenterer.
+    if (post_id !== undefined) { b.post_id = post_id; delete b.kategori }
     if (type !== undefined) b.type = type
   }
   saveDb(db)

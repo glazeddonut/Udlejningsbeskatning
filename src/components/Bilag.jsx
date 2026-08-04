@@ -1,22 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api.js'
-import { kr2, parseNum } from '../lib/format.js'
+import { bilagForAar, bilagPost } from '../lib/bilag.js'
+import { KONTOPLAN, posterIGruppe } from '../lib/kontoplan.js'
+import { kr2 } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
-const KATEGORIER = [
-  { value: 'Husleje', label: 'Husleje' },
-  { value: 'Vand', label: 'Vand' },
-  { value: 'Varme', label: 'Varme' },
-  { value: 'Anden indtægt', label: 'Anden indtægt' },
-  { value: 'Grundskyld', label: 'Grundskyld' },
-  { value: 'Fællesudgifter', label: 'Fællesudgifter' },
-  { value: 'Forsikring', label: 'Forsikring' },
-  { value: 'Vedligeholdelse', label: 'Vedligeholdelse' },
-  { value: 'Administration', label: 'Administration' },
-  { value: 'Renovation', label: 'Renovation' },
-  { value: 'Renteudgifter', label: 'Renteudgifter' },
-  { value: 'Andet', label: 'Andet' },
+// Postvælgeren bygges af kontoplanen — ikke af en liste her i komponenten. Et bilag og
+// en regnskabslinje skal være det samme begreb, ellers kan de to aldrig afstemmes
+// (ADR-0005). De to sidste poster er ikke linjer i udlejningsresultatet, og står
+// derfor for sig selv, så de ikke forveksles med de fradragsberettigede udgifter.
+const valg = (p) => ({ value: p.id, label: p.label })
+const POSTER = [
+  { label: 'Indtægter', options: posterIGruppe('indtaegter').map(valg) },
+  { label: 'Fradragsberettigede udgifter', options: posterIGruppe('udgifter').map(valg) },
+  { label: 'Uden for udlejningsresultatet', options: KONTOPLAN.filter(p => !p.summerbar).map(valg) },
 ]
+const STANDARD_POST = 'udgifter.vedligeholdelse'
 const TYPER = [
   { value: 'udgift', label: 'Udgift' },
   { value: 'indtaegt', label: 'Indtægt' },
@@ -43,7 +42,9 @@ export default function Bilag({ years }) {
   }, [valgtAar])
   useEffect(() => { hent() }, [hent])
 
-  const total = bilag.reduce((s, b) => s + (b.type === 'indtaegt' ? 1 : -1) * (Number(b.beloeb) || 0), 0)
+  // Nummer og rækkefølge kommer fra ét sted (src/lib/bilag.js), ikke fra en sortering her.
+  const aaretsBilag = bilagForAar(bilag, valgtAar)
+  const total = aaretsBilag.reduce((s, b) => s + (b.type === 'indtaegt' ? 1 : -1) * (Number(b.beloeb) || 0), 0)
 
   return (
     <>
@@ -71,14 +72,14 @@ export default function Bilag({ years }) {
       {valgtAar && (
         <div className="card">
           <h2>Bilag {valgtAar}</h2>
-          {bilag.length === 0 && <p className="empty-state">Ingen bilag endnu.</p>}
-          {bilag.length > 0 && (
+          {aaretsBilag.length === 0 && <p className="empty-state">Ingen bilag endnu.</p>}
+          {aaretsBilag.length > 0 && (
             <table className="data">
               <thead>
-                <tr><th>Nr.</th><th>Dato</th><th>Tekst</th><th>Kategori</th><th className="num">Beløb</th><th>Fil</th><th></th></tr>
+                <tr><th>Nr.</th><th>Dato</th><th>Tekst</th><th>Post</th><th className="num">Beløb</th><th>Fil</th><th></th></tr>
               </thead>
               <tbody>
-                {[...bilag].sort((a, b) => a.nummer - b.nummer).map(b => (
+                {aaretsBilag.map(b => (
                   <BilagRow key={b.id} b={b} onDone={hent} />
                 ))}
                 <tr className="total">
@@ -97,7 +98,7 @@ export default function Bilag({ years }) {
 
 function UploadForm({ aar, onDone }) {
   const [file, setFile] = useState(null)
-  const [meta, setMeta] = useState({ dato: '', tekst: '', beloeb: 0, kategori: 'Vedligeholdelse', type: 'udgift' })
+  const [meta, setMeta] = useState({ dato: '', tekst: '', beloeb: 0, post_id: STANDARD_POST, type: 'udgift' })
   const [gemmer, setGemmer] = useState(false)
   const [fejl, setFejl] = useState('')
 
@@ -110,7 +111,7 @@ function UploadForm({ aar, onDone }) {
         aar, ...meta,
         filnavn: file.name, mimetype: file.type || 'application/octet-stream', data,
       })
-      setFile(null); setMeta({ dato: '', tekst: '', beloeb: 0, kategori: 'Vedligeholdelse', type: 'udgift' })
+      setFile(null); setMeta({ dato: '', tekst: '', beloeb: 0, post_id: STANDARD_POST, type: 'udgift' })
       // nulstil fil-input
       const input = document.getElementById('bilag-fil'); if (input) input.value = ''
       onDone()
@@ -131,9 +132,9 @@ function UploadForm({ aar, onDone }) {
         </div>
         <SelectField label="Type" value={meta.type} onChange={v => setMeta({ ...meta, type: v })} options={TYPER} />
         <TextField label="Dato" type="date" value={meta.dato} onChange={v => setMeta({ ...meta, dato: v })} />
-        <SelectField label="Kategori" value={meta.kategori} onChange={v => setMeta({ ...meta, kategori: v })} options={KATEGORIER} />
+        <SelectField label="Post" hint="posten i kontoplanen bilaget dokumenterer" value={meta.post_id} onChange={v => setMeta({ ...meta, post_id: v })} options={POSTER} />
         <TextField label="Tekst / beskrivelse" value={meta.tekst} onChange={v => setMeta({ ...meta, tekst: v })} placeholder="fx VVS-reparation, faktura 1234" />
-        <NumberField label="Beløb" value={meta.beloeb || ''} onChange={v => setMeta({ ...meta, beloeb: parseNum(v) })} />
+        <NumberField label="Beløb" value={meta.beloeb || ''} onChange={v => setMeta({ ...meta, beloeb: v })} />
       </div>
       <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
         <button className="btn primary" onClick={gem} disabled={gemmer || !file}>{gemmer ? 'Uploader…' : 'Tilføj bilag'}</button>
@@ -145,6 +146,10 @@ function UploadForm({ aar, onDone }) {
 
 function BilagRow({ b, onDone }) {
   const erBillede = (b.mimetype || '').startsWith('image/')
+  // Kender kontoplanen ikke posten, vises den bevarede kategori markeret — den må
+  // hverken forsvinde eller læses som en rigtig post. Tekst og markering kommer
+  // samme sted fra, så de ikke kan komme til at sige hver sit.
+  const post = bilagPost(b)
   const filUrl = `/api/bilag/${b.id}/fil`
   const slet = async () => { if (confirm(`Slet bilag ${b.nummer} (${b.tekst})?`)) { await api.del(`/bilag/${b.id}`); onDone() } }
 
@@ -153,7 +158,7 @@ function BilagRow({ b, onDone }) {
       <td>{b.nummer}</td>
       <td>{b.dato}</td>
       <td>{b.tekst}</td>
-      <td>{b.kategori}</td>
+      <td className={post.kendt ? undefined : 'ukendt-post'}>{post.label}</td>
       <td className="num">{kr2(b.beloeb)}</td>
       <td>
         {b.filsti ? (

@@ -16,7 +16,7 @@
 //
 // "kilde" evalueres pr. person i evalKilde nedenfor.
 
-import { udlejningsdage, udlejningsdage360 } from './beregning.js'
+import { udlejningsdage, udlejningsdage360, manglerPeriode, udlejetAndel } from './beregning.js'
 
 // `naar`: 'overskud' vises kun når personens resultat ≥ 0; 'underskud' kun når < 0.
 // (Verificeret mod skat.dk juli 2026: forskud 221/435, 481, 699; oplysningsskema 111/112, 117, 42, 699.)
@@ -67,16 +67,57 @@ export const DEFAULT_FELTMAPPING = {
   },
 }
 
-// Hent feltmapping for et år + doktype. Rækkefølge: overrides → default for året →
+// Hent feltmappingen for et år + doktype. Rækkefølge: overrides → default for året →
 // nærmeste tidligere definerede år → ellers ældste definerede år (fallback opad).
+//
+// Svaret bærer felterne SAMMEN MED deres herkomst, og det er med vilje: der findes i dag
+// kun defaults for ét år, så ethvert andet år arver dem. Returnerede funktionen bare
+// rækkerne, kunne en flade vise en pæn liste feltnumre for 2027 uden at kunne skrive at
+// de er 2026's — netop den tavse fejl på projektets højeste risikopunkt. Nu kan man ikke
+// få fat i `felter` uden også at have `kildeAar` i hånden.
+//
+//   aar       — året der blev spurgt om
+//   felter    — rækkerne der faktisk gælder
+//   kildeAar  — det år rækkerne stammer fra (null hvis der slet ingen findes)
+//   egetAar   — er kilden årets egen mapping? false ⇒ arvet og uverificeret for `aar`
+//   rettet    — kommer rækkerne fra brugerens egne overrides i DB'en? ("rette feltnumre"
+//               er editorens eget ord for det, se Indstillinger)
 export function hentFeltmapping(aar, doktype, overrides = {}) {
-  const key = `${aar}-${doktype}`
-  if (overrides[key]?.length) return overrides[key]
-  if (DEFAULT_FELTMAPPING[aar]?.[doktype]) return DEFAULT_FELTMAPPING[aar][doktype]
+  const medHerkomst = (felter, kildeAar, rettet) =>
+    ({ aar, felter, kildeAar, egetAar: kildeAar != null && kildeAar === aar, rettet })
+
+  const under = defaultFeltmapping(aar, doktype)   // hvad året ville arve uden rettelser
+
+  const override = overrides[`${aar}-${doktype}`]
+  if (override?.length) {
+    // En override tæller først som ÅRETS EGEN kilde, når den faktisk afviger fra det
+    // arvede. Editoren prefiller nemlig med de arvede rækker, så et enkelt klik på
+    // "Gem feltnumre" ville ellers kunne slukke advarslen for et år, uden at ét eneste
+    // feltnummer var verificeret mod skat.dk. `rettet` siger hvor bytesene kom fra;
+    // `egetAar` siger om nogen har taget stilling til dem for netop dette år.
+    const uaendret = under.kildeAar !== aar && sammeFelter(override, under.felter)
+    return medHerkomst(override, uaendret ? under.kildeAar : aar, true)
+  }
+  return medHerkomst(under.felter, under.kildeAar, false)
+}
+
+// Defaults for året, ellers nærmeste tidligere definerede år, ellers det ældste.
+// `kildeAar: null` er "ingen kilde overhovedet", ikke et år.
+function defaultFeltmapping(aar, doktype) {
+  if (DEFAULT_FELTMAPPING[aar]?.[doktype]) return { felter: DEFAULT_FELTMAPPING[aar][doktype], kildeAar: aar }
   const aarKeys = Object.keys(DEFAULT_FELTMAPPING).map(Number).sort((a, b) => a - b)
   const tidligere = aarKeys.filter(y => y <= aar).sort((a, b) => b - a)
   const kandidat = tidligere[0] ?? aarKeys[0]   // foretræk ≤ aar, ellers ældste definerede
-  return (kandidat != null && DEFAULT_FELTMAPPING[kandidat]?.[doktype]) || []
+  const arvet = kandidat != null ? DEFAULT_FELTMAPPING[kandidat]?.[doktype] : null
+  return arvet ? { felter: arvet, kildeAar: kandidat } : { felter: [], kildeAar: null }
+}
+
+// Er to sæt feltrækker indholdsmæssigt ens? Nøglerækkefølge må ikke afgøre det —
+// editoren kopierer rækkerne med spread, men en håndredigeret DB kan se anderledes ud.
+function sammeFelter(a, b) {
+  if (a.length !== b.length) return false
+  const kanonisk = (r) => JSON.stringify(Object.keys(r).sort().map(k => [k, r[k]]))
+  return a.every((r, i) => kanonisk(r) === kanonisk(b[i]))
 }
 
 // Personens rolle i feltmappingen: den beskattede får 'beskattet'-felter, den anden
@@ -103,9 +144,15 @@ export function evalKilde(kilde, { personOpg, saet, person }) {
     case 'resultat': return Math.round(personOpg?.resultatAndel || 0)
     case 'renter_beskattet': return Math.round(personOpg?.renter || 0)
     case 'renter_flyt': return Math.round(personOpg?.renterFysisk || 0)
-    case 'udlejningsdage': return udlejningsdage(saet)
-    case 'udlejningsdage360': return udlejningsdage360(saet)
-    case 'udlejet_andel_pct': return Math.round(Number(saet?.udlejet_andel_pct) || 0)
+    // Uden udlejningsperiode findes der ingen værdi at indberette (ADR-0002). null
+    // betyder "ingen værdi" og adskiller sig fra 0, som ville være et tal brugeren
+    // kunne komme til at taste ind i felt 748 / rubrik 207. Fladen skriver flaget.
+    case 'udlejningsdage': return manglerPeriode(saet) ? null : udlejningsdage(saet)
+    case 'udlejningsdage360': return manglerPeriode(saet) ? null : udlejningsdage360(saet)
+    // Præcis den andel fradraget er regnet på (ADR-0003) — ikke det rå felt. Læses de to
+    // hver for sig, kan man indberette 0 % i felt 744 (tomt felt) og samtidig fradrage
+    // 100 %, eller indberette 150 % af en tastefejl mens fradraget er klemt til 100.
+    case 'udlejet_andel_pct': return udlejetAndel(saet)
     case 'naertstaaende': return saet?.naertstaaende ? 'Ja' : 'Nej'
     case 'cpr': return person?.cpr || '(indtast CVR/SE eller CPR)'
     case 'moms_nul': return 0

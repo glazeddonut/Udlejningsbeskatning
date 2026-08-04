@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, kr, pct } from '../lib/format.js'
+import { kr, pct } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
 const TYPER = [
@@ -80,6 +80,13 @@ function LaanRow({ loan, persons, reload }) {
         <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
           Restgæld {kr(loan.restgaeld)}{loan.restgaeld_dato ? ` (pr. ${datoTekst(loan.restgaeld_dato)})` : ''} · rente {pct(loan.rente_pct)} · {haefteTekst}
         </div>
+        {/* Startdatoen skærer renteskønnet til i optagelsesåret. Uden den dækker skønnet
+            hele året, og det skal kunne ses her frem for først at overraske i Årets tal. */}
+        <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+          {loan.startdato
+            ? `Optaget ${datoTekst(loan.startdato)}`
+            : <span className="badge neutral">Startdato mangler — renteskønnet dækker hele året</span>}
+        </div>
       </div>
       <button className="btn ghost" onClick={() => setRediger(true)}>Rediger</button>
     </div>
@@ -88,11 +95,19 @@ function LaanRow({ loan, persons, reload }) {
 
 function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
   const [l, setL] = useState(initial || {
-    type: 'realkredit', laangiver: '', hovedstol: 0, restgaeld: 0, restgaeld_dato: forrigeAarsskifte(), rente_pct: 0,
+    type: 'realkredit', laangiver: '', hovedstol: 0, restgaeld: 0, restgaeld_dato: forrigeAarsskifte(),
+    startdato: '', rente_pct: 0,
     haeftelse: standardHaeftelse(persons),
   })
   const upd = (patch) => setL({ ...l, ...patch })
-  const updHaefte = (pid, v) => setL({ ...l, haeftelse: { ...l.haeftelse, [pid]: parseNum(v) } })
+  const updHaefte = (pid, v) => setL({ ...l, haeftelse: { ...l.haeftelse, [pid]: v } })
+  // Serveren afviser et beløb der ikke er et tal, en peildato der ikke er en dato og
+  // en hæftelse uden for 0–100 %. Fejlen vises her frem for at gemningen tavst svigter.
+  const [fejl, setFejl] = useState('')
+  const gem = async () => {
+    try { await onSave(l) } catch (e) { setFejl(e.message); return }
+    setFejl('')
+  }
   const haefteSum = persons.reduce((s, p) => s + (Number(l.haeftelse?.[p.id]) || 0), 0)
   const haefteOk = Math.abs(haefteSum - 100) < 0.01 || persons.length === 0
 
@@ -101,10 +116,11 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
       <div className="grid">
         <SelectField label="Type" value={l.type} onChange={v => upd({ type: v })} options={TYPER} />
         <TextField label="Långiver" value={l.laangiver} onChange={v => upd({ laangiver: v })} placeholder="fx Totalkredit / Nordea" />
-        <NumberField label="Hovedstol" value={l.hovedstol} onChange={v => upd({ hovedstol: parseNum(v) })} />
-        <NumberField label="Restgæld" hint="saldo på peildatoen" value={l.restgaeld} onChange={v => upd({ restgaeld: parseNum(v) })} />
+        <NumberField label="Hovedstol" value={l.hovedstol} onChange={v => upd({ hovedstol: v })} />
+        <TextField label="Optaget" hint="lånets startdato — skærer renteskønnet til i optagelsesåret" type="date" value={l.startdato || ''} onChange={v => upd({ startdato: v })} />
+        <NumberField label="Restgæld" hint="saldo på peildatoen" value={l.restgaeld} onChange={v => upd({ restgaeld: v })} />
         <TextField label="Restgæld pr." hint="peildato (fx bankens 31/12)" type="date" value={l.restgaeld_dato || ''} onChange={v => upd({ restgaeld_dato: v })} />
-        <NumberField label="Rente" value={l.rente_pct} onChange={v => upd({ rente_pct: parseNum(v) })} suffix="%" />
+        <NumberField label="Rente" value={l.rente_pct} onChange={v => upd({ rente_pct: v })} suffix="%" />
       </div>
 
       <div style={{ marginTop: 14 }}>
@@ -118,8 +134,9 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
       </div>
 
       <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
-        <button className="btn primary" onClick={() => onSave(l)}>Gem lån</button>
+        <button className="btn primary" onClick={gem}>Gem lån</button>
         <button className="btn ghost" onClick={onCancel}>Annullér</button>
+        {fejl && <span className="badge warn" style={{ alignSelf: 'center' }}>{fejl}</span>}
         {onDelete && <button className="btn danger" onClick={onDelete} style={{ marginLeft: 'auto' }}>Slet</button>}
       </div>
     </div>

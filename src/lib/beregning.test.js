@@ -1,11 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   tomtSaet, sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
   sumRenter, fordelPrPerson, renterPrPerson, personOpgoerelse, markedslejeTjek,
   resolveFordeling, antalMaaneder, udlejningsdage, effektivBeloeb, estimeretAarligRente,
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
-  aarsgrundlag, periodeAfvigelse,
+  aarsgrundlag, periodeAfvigelse, periodeKvittering, gruppeOpgoerelse, manglerPeriode,
+  udlejetAndel, fradragsBeloeb, aarsinterval, maaAarOprettes, prefillSaet, saetTilNytAar,
+  renteskoen,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -134,9 +137,28 @@ test('antalMaaneder: fra/til giver antal, default = 12', () => {
   assert.equal(antalMaaneder({ fra_maaned: 6, til_maaned: 6 }), 1)
 })
 
-test('udlejningsdage: 30-dages-måneder (5 mdr = 150, fuldt år = 360)', () => {
-  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 150)
-  assert.equal(udlejningsdage({}), 360)
+// Skrevet om (ADR-0002): testen cementerede tidligere udlejningsdage({}) === 360.
+// 360 er præcis SKATs egen værdi for et helt udlejningsår, så gættet så legitimt ud
+// netop når oplysningen manglede. Uden en udlejningsperiode er svaret nu 0 + et flag.
+test('udlejningsdage uden periode: 0 dage og et flag — aldrig et gæt', () => {
+  assert.equal(udlejningsdage({}), 0)
+  assert.equal(manglerPeriode({}), true)
+  // Heller ikke det gamle måneds-format må genoplive gættet
+  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 0)
+  assert.equal(manglerPeriode({ fra_maaned: 8, til_maaned: 12 }), true)
+})
+
+test('manglerPeriode: kun en hel periode med to gyldige datoer tæller som oplyst', () => {
+  assert.equal(manglerPeriode({ fra_dato: '2025-08-06', til_dato: '2025-12-31' }), false)
+  assert.equal(manglerPeriode({ fra_dato: '2025-08-06', til_dato: '' }), true)   // mangler til-dato
+  assert.equal(manglerPeriode({ fra_dato: '', til_dato: '2025-12-31' }), true)   // mangler fra-dato
+  assert.equal(manglerPeriode(null), true)
+  assert.equal(manglerPeriode({ fra_dato: 'ikke en dato', til_dato: '2025-12-31' }), true)
+})
+
+test('udlejningsdage: en halv periode er også en manglende periode', () => {
+  assert.equal(udlejningsdage({ fra_dato: '2025-08-06' }), 0)                    // ingen til-dato
+  assert.equal(udlejningsdage({ til_dato: '2025-12-31' }), 0)                    // ingen fra-dato
 })
 
 test('effektivBeloeb: pro rata ganger månedsbeløb med antal måneder', () => {
@@ -158,6 +180,289 @@ test('sumIndtaegter respekterer pro rata pr. felt', () => {
   assert.equal(sumIndtaegter(saet), 6000 * 5 + 1000)  // 31.000
 })
 
+// ── Gruppesummering over kontoplanen + hjemløse poster (ADR-0001) ─────────────
+// Invarianten: rækkerne i en gruppe summer ALTID til gruppens total. En værdi under
+// en nøgle kontoplanen ikke kender er hjemløs — den tælles med og rapporteres, så en
+// visende flade kan give den sin egen række.
+
+test('gruppeOpgoerelse: kun kendte poster — kontoplanens rækkefølge, ingen hjemløse', () => {
+  const saet = { indtaegter: { leje: 72000, vand: 3600 } }
+  const g = gruppeOpgoerelse(saet, 'indtaegter')
+  assert.deepEqual(g.poster.map(p => p.noegle), ['leje', 'vand', 'varme', 'andet'])
+  assert.deepEqual(g.poster.map(p => p.beloeb), [72000, 3600, 0, 0])   // manglende nøgle = 0
+  assert.deepEqual(g.hjemloese, [])
+  assert.equal(g.sum, 75600)
+  assert.equal(g.sum, g.poster.reduce((s, p) => s + p.beloeb, 0))      // rækkerne summer til totalen
+})
+
+test('gruppeOpgoerelse: kendte plus hjemløse — den hjemløse tælles med i totalen', () => {
+  const saet = { udgifter: { grundskyld: 7488, ejerforening: 1200, gammel_nøgle: 300 } }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.poster.every(p => p.noegle !== 'ejerforening'), true) // ikke i kontoplanen
+  assert.deepEqual(g.hjemloese.map(h => [h.noegle, h.beloeb]), [['ejerforening', 1200], ['gammel_nøgle', 300]])
+  assert.deepEqual(g.hjemloese.map(h => h.id), ['udgifter.ejerforening', 'udgifter.gammel_nøgle'])
+  assert.equal(g.sum, 7488 + 1200 + 300)
+  const raekkesum = [...g.poster, ...g.hjemloese].reduce((s, p) => s + p.beloeb, 0)
+  assert.equal(g.sum, raekkesum)
+  assert.equal(sumFradragsUdgifter(saet), 8988)                        // samme total som gruppen
+})
+
+test('gruppeOpgoerelse: kun hjemløse — totalen er stadig summen af alt gemt data', () => {
+  const saet = { udgifter: { ejerforening: 1200 } }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.poster.every(p => p.beloeb === 0), true)
+  assert.equal(g.sum, 1200)
+  assert.equal(sumFradragsUdgifter(saet), 1200)
+  assert.equal(resultatFoerRenter(saet), -1200)                        // en hjemløs udgift er stadig et fradrag
+})
+
+test('gruppeOpgoerelse: tomt talsæt — alt nul, ingen hjemløse', () => {
+  for (const saet of [tomtSaet(), {}, null]) {
+    const g = gruppeOpgoerelse(saet, 'udgifter')
+    assert.deepEqual(g.hjemloese, [])
+    assert.equal(g.sum, 0)
+  }
+  assert.equal(sumIndtaegter(tomtSaet()), 0)
+  assert.equal(sumFradragsUdgifter(tomtSaet()), 0)
+})
+
+test('en hjemløs post regnes pro rata på præcis samme vilkår som en kendt post', () => {
+  const saet = {
+    fra_dato: '2025-08-05', til_dato: '2025-12-31',
+    udgifter: { ejerforening: 1000 },
+    prorata: { 'udgifter.ejerforening': true },
+  }
+  const forventet = Math.round(1000 * prorataMaaneder(saet))
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.hjemloese[0].beloeb, forventet)
+  assert.equal(g.hjemloese[0].prorata, true)
+  assert.equal(g.sum, forventet)
+})
+
+test('en hjemløs indtægt rapporteres på samme måde som en hjemløs udgift', () => {
+  const saet = { indtaegter: { depositum: 18000 }, udgifter: { ejerforening: 1200 } }
+  assert.deepEqual(gruppeOpgoerelse(saet, 'indtaegter').hjemloese.map(h => h.id), ['indtaegter.depositum'])
+  assert.deepEqual(gruppeOpgoerelse(saet, 'udgifter').hjemloese.map(h => h.id), ['udgifter.ejerforening'])
+  assert.equal(resultatFoerRenter(saet), 18000 - 1200)
+})
+
+// ── Den udlejede andel (ADR-0003) ─────────────────────────────────────────────
+
+test('udlejetAndel: fuld udlejning er default — et talsæt uden andelen er 100 %', () => {
+  assert.equal(udlejetAndel(tomtSaet()), 100)
+  assert.equal(udlejetAndel({}), 100)
+  assert.equal(udlejetAndel(null), 100)
+  assert.equal(udlejetAndel({ udlejet_andel_pct: '' }), 100)
+  assert.equal(udlejetAndel({ udlejet_andel_pct: 'noget vrøvl' }), 100)
+})
+
+test('udlejetAndel: 0 er en rigtig andel og bliver ikke lavet om til fuld udlejning', () => {
+  assert.equal(udlejetAndel({ udlejet_andel_pct: 0 }), 0)
+})
+
+test('udlejetAndel: en andel over 100 eller under 0 kan ikke forøge et fradrag', () => {
+  assert.equal(udlejetAndel({ udlejet_andel_pct: 150 }), 100)
+  assert.equal(udlejetAndel({ udlejet_andel_pct: -20 }), 0)
+})
+
+test('fradragsBeloeb: ved fuld udlejning er fradraget det effektive årsbeløb, krone for krone', () => {
+  const saet = eksempelSaet()                                    // udlejet_andel_pct = 100
+  for (const gruppe of ['indtaegter', 'udgifter']) {
+    for (const noegle of Object.keys(saet[gruppe])) {
+      assert.equal(fradragsBeloeb(saet, gruppe, noegle), effektivBeloeb(saet, gruppe, noegle), `${gruppe}.${noegle}`)
+    }
+  }
+})
+
+test('fradragsBeloeb: en delvis andel rammer ejendomsposterne — og kun dem', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 60 }
+  // Ejendomsposter: hele ejendommens omkostning, kun fradrag med den udlejede andel.
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld'), 4493)               // 60 % af 7.488
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 14400)         // 60 % af 24.000
+  // Vedrører udelukkende det udlejede — uberørt.
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'vedligeholdelse'), 30000)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'vand'), 3600)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'varme'), 3600)
+})
+
+test('fradragsBeloeb: indtægter er upåvirkede ved enhver andel — lejen er den leje der er modtaget', () => {
+  for (const pct of [0, 1, 33, 60, 99, 100]) {
+    const saet = { ...eksempelSaet(), udlejet_andel_pct: pct }
+    assert.equal(fradragsBeloeb(saet, 'indtaegter', 'leje'), 72000, `andel ${pct}`)
+    assert.equal(fradragsBeloeb(saet, 'indtaegter', 'vand'), 3600, `andel ${pct}`)
+    assert.equal(fradragsBeloeb(saet, 'indtaegter', 'varme'), 3600, `andel ${pct}`)
+  }
+})
+
+test('fradragsBeloeb: 0 % nulstiller ejendomsposterne og kun dem', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 0 }
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld'), 0)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 0)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'vedligeholdelse'), 30000)
+  assert.equal(fradragsBeloeb(saet, 'indtaegter', 'leje'), 72000)
+})
+
+// Rækkefølgen af de to faktorer er et VALG, ikke en tilfældighed: pro rata først, så
+// andelen. Pro rata siger hvad der er afholdt i perioden (en kendsgerning om året),
+// andelen hvor meget af det der er fradragsberettiget. De to er kun ombyttelige indtil
+// afrundingen — effektivBeloeb runder til hele kroner, og gør man det på det allerede
+// nedskrevne beløb, får man et andet tal.
+test('fradragsBeloeb: pro rata regnes først, derefter andelen', () => {
+  const saet = {
+    fra_dato: '2025-08-05', til_dato: '2025-12-31',
+    udgifter: { faellesudgifter: 1000 },
+    prorata: { 'udgifter.faellesudgifter': true },
+    udlejet_andel_pct: 60,
+  }
+  const mdr = prorataMaaneder(saet)                          // 4,8709…
+  const proRataFoerst = Math.round(Math.round(1000 * mdr) * 0.6)   // 4.871 → 2.923
+  const andelFoerst = Math.round(1000 * 0.6 * mdr)                 // 2.923 — den anden vej
+  assert.equal(proRataFoerst, 2923)
+  assert.equal(andelFoerst, 2923)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), proRataFoerst)
+  assert.equal(effektivBeloeb(saet, 'udgifter', 'faellesudgifter'), 4871)  // uændret af andelen
+})
+
+// Rækkefølgen er ikke altid usynlig. Regnes andelen først, mister man ører FØR pro rata
+// ganger dem op, og forskellen bliver til hele kroner.
+test('fradragsBeloeb: pro rata før andel giver et andet tal end andel før pro rata', () => {
+  const saet = {
+    fra_dato: '2025-01-01', til_dato: '2025-12-31',
+    udgifter: { faellesudgifter: 1041 },
+    prorata: { 'udgifter.faellesudgifter': true },
+    udlejet_andel_pct: 33,
+  }
+  assert.equal(effektivBeloeb(saet, 'udgifter', 'faellesudgifter'), 12492)   // 1.041 × 12
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 4122)    // 33 % af 12.492
+  assert.equal(Math.round(1041 * 33 / 100) * 12, 4128)                       // den anden vej: 6 kr. fra
+})
+
+// Afrundingen sker PR. POST, til øre — den mindste enhed et beløb kan bære. Rundes der
+// først på summen, kan rækkerne i regnskabet ikke længere lægges sammen til totalen
+// (ADR-0001), og et regnskab hvor delene ikke giver totalen er værdiløst over for SKAT.
+// Afrundingen sker PR. POST og til HELE KRONER — samme konvention som effektivBeloeb
+// bruger på pro rata. Det er ikke kosmetik: regnskabets rækker skrives med kr() uden
+// decimaler, så en andel der efterlod ører ville give rækker der ikke kunne lægges
+// sammen til den viste total (60 % af 3.121 = 1.872,60 skrives som 1.873, men tæller
+// 1.872,60 i summen). ADR-0001 kræver at delene giver totalen.
+test('fradragsBeloeb: afrundes pr. post til hele kroner, så andelen ikke laver ører', () => {
+  const saet = { udgifter: { grundskyld: 3121, faellesudgifter: 13251 }, udlejet_andel_pct: 60 }
+  assert.equal(3121 * 60 / 100, 1872.6)                   // det uafrundede mellemresultat
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'grundskyld'), 1873)
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 7951)
+  assert.equal(sumFradragsUdgifter(saet), 1873 + 7951)    // rækkerne ER totalen
+})
+
+test('fradragsBeloeb: et tastet ørebeløb bliver til hele kroner efter andelen', () => {
+  const saet = { udgifter: { faellesudgifter: 21608.75 }, udlejet_andel_pct: 60 }
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'faellesudgifter'), 12965)
+})
+
+// Alle ører i et regnskab skal komme fra noget brugeren selv har tastet. Andelen må
+// ikke kunne tilføje nye — det er den eneste måde rækkerne kan blive ved med at summe
+// til den viste total.
+test('fradragsBeloeb: andelen tilføjer aldrig ører til et helt kronebeløb', () => {
+  for (const pct of [1, 12.5, 33, 60, 87, 99]) {
+    for (const beloeb of [1, 7, 999, 3120, 7488, 13250, 31200]) {
+      const v = fradragsBeloeb({ udgifter: { grundskyld: beloeb }, udlejet_andel_pct: pct }, 'udgifter', 'grundskyld')
+      assert.ok(Number.isInteger(v), `${pct} % af ${beloeb} gav ${v}`)
+    }
+  }
+})
+
+test('fradragsBeloeb: en hjemløs post er ikke en ejendomspost og røres ikke', () => {
+  const saet = { udgifter: { ejerforening: 12000 }, udlejet_andel_pct: 60 }
+  assert.equal(fradragsBeloeb(saet, 'udgifter', 'ejerforening'), 12000)
+})
+
+test('gruppeOpgoerelse: ved 100 % er hver række sit fulde beløb — intet er skåret ned', () => {
+  const g = gruppeOpgoerelse(eksempelSaet(), 'udgifter')
+  assert.equal(g.andelPct, 100)
+  assert.equal(g.sum, 68688)
+  assert.equal(g.sumFoerAndel, 68688)
+  for (const p of g.poster) assert.equal(p.beloeb, p.beloebFoerAndel, p.id)
+})
+
+test('gruppeOpgoerelse: en delvis andel skærer kun ejendomsposternes rækker ned', () => {
+  const g = gruppeOpgoerelse({ ...eksempelSaet(), udlejet_andel_pct: 60 }, 'udgifter')
+  const linje = (n) => g.poster.find(p => p.noegle === n)
+  assert.equal(g.andelPct, 60)
+  assert.equal(linje('grundskyld').beloebFoerAndel, 7488)
+  assert.equal(linje('grundskyld').beloeb, 4493)
+  assert.equal(linje('grundskyld').andel, true)
+  assert.equal(linje('faellesudgifter').beloeb, 14400)
+  assert.equal(linje('vedligeholdelse').beloeb, 30000)          // kun det udlejede
+  assert.equal(linje('vedligeholdelse').beloebFoerAndel, 30000)
+  assert.equal(linje('vedligeholdelse').andel, false)
+  assert.equal(linje('forsikring').andel, false, 'en ejendomspost uden beløb er ikke skåret ned')
+  // Rækkerne summer stadig til totalen (ADR-0001)
+  assert.equal(g.sum, [...g.poster, ...g.hjemloese].reduce((s, p) => s + p.beloeb, 0))
+  assert.equal(g.sum, 4493 + 14400 + 30000 + 3600 + 3600)   // 56.093
+  assert.equal(g.sumFoerAndel, 68688)
+})
+
+test('gruppeOpgoerelse: indtægtsgruppen er den samme uanset andelen', () => {
+  const fuld = gruppeOpgoerelse(eksempelSaet(), 'indtaegter')
+  for (const pct of [0, 25, 60, 99]) {
+    const delvis = gruppeOpgoerelse({ ...eksempelSaet(), udlejet_andel_pct: pct }, 'indtaegter')
+    assert.equal(delvis.sum, fuld.sum, `andel ${pct}`)
+    assert.deepEqual(delvis.poster.map(p => p.beloeb), fuld.poster.map(p => p.beloeb), `andel ${pct}`)
+  }
+})
+
+test('gruppeOpgoerelse: en hjemløs post tælles fuldt med, uanset andelen', () => {
+  const saet = { udgifter: { grundskyld: 7488, ejerforening: 12000 }, udlejet_andel_pct: 60 }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.equal(g.hjemloese[0].beloeb, 12000)
+  assert.equal(g.hjemloese[0].beloebFoerAndel, 12000)
+  assert.equal(g.hjemloese[0].ejendomspost, false)
+  assert.equal(g.hjemloese[0].andel, false)
+  assert.equal(g.sum, 4493 + 12000)
+})
+
+test('resultatFoerRenter: den udlejede andel slår igennem på fradraget, ikke på lejen', () => {
+  const fuld = eksempelSaet()
+  const delvis = { ...fuld, udlejet_andel_pct: 60 }
+  assert.equal(sumIndtaegter(delvis), sumIndtaegter(fuld))                 // 79.200 begge veje
+  assert.equal(sumFradragsUdgifter(delvis), 56093)     // 68.688 − 40 % af (7.488 + 24.000)
+  assert.equal(resultatFoerRenter(delvis), 23107)      // 79.200 − 56.093
+  // Et mindre fradrag giver et STØRRE resultat — det er hele pointen.
+  assert.ok(resultatFoerRenter(delvis) > resultatFoerRenter(fuld))
+})
+
+test('resultatFoerRenter: 0 % fjerner ejendomsposternes fradrag, men ingen andre', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 0 }
+  assert.equal(sumFradragsUdgifter(saet), 68688 - 7488 - 24000)            // 37.200
+  assert.equal(sumIndtaegter(saet), 79200)
+})
+
+// De eneste ører der må stå i et regnskab er dem brugeren selv har tastet. Andelen laver
+// ingen nye, så en total kan stadig lægges sammen af sine rækker — også når en enkelt
+// post er tastet med ører.
+test('en delvis andel efterlader kun de ører brugeren selv har tastet', () => {
+  const saet = {
+    indtaegter: { leje: 79200 },
+    udgifter: {
+      grundskyld: 7488, faellesudgifter: 31200, vedligeholdelse: 21608.75,
+      vand: 3600, varme: 3600, andet: 2695,
+    },
+    udlejet_andel_pct: 60,
+  }
+  const g = gruppeOpgoerelse(saet, 'udgifter')
+  assert.deepEqual(g.poster.filter(p => p.beloeb).map(p => [p.noegle, p.beloeb]), [
+    ['grundskyld', 4493], ['faellesudgifter', 18720], ['vedligeholdelse', 21608.75],
+    ['vand', 3600], ['varme', 3600], ['andet', 2695],
+  ])
+  assert.equal(sumFradragsUdgifter(saet), 54716.75)
+  assert.equal(resultatFoerRenter(saet), 24483.25)
+})
+
+test('renteudgifter og forbedringer ligger uden for den udlejede andel', () => {
+  const saet = { ...eksempelSaet(), udlejet_andel_pct: 40 }
+  assert.equal(sumRenter(saet), 42380)                                     // renter er personlige
+  assert.equal(saet.forbedringer, 12000)                                   // ikke fradrag i forvejen
+})
+
 test('udlejningsdage (datobaseret): faktiske kalenderdage inkl. start og slut', () => {
   assert.equal(udlejningsdage({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 149)
   assert.equal(udlejningsdage({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 365)
@@ -177,6 +482,33 @@ test('periodeForAar: klipper lejeperioden til året', () => {
   assert.deepEqual(periodeForAar(lease2, 2027), ['2027-01-01', '2027-06-15'])
 })
 
+// Samme fælde som de manglende datoer, ad en anden vej (ADR-0002): uden kontrakt fik
+// året tildelt hele kalenderåret og dermed 360 indberetningsdage — uden at nogen havde
+// lejet noget ud. Ingen lejekontrakt betyder ingen periode.
+test('periodeForAar uden lejekontrakt: ingen periode, ikke hele kalenderåret', () => {
+  assert.deepEqual(periodeForAar(null, 2028), ['', ''])
+  assert.deepEqual(periodeForAar(undefined, 2028), ['', ''])
+})
+
+test('et hul-år får hverken periode eller dagstal', () => {
+  // Kontrakterne dækker 2025–2027 og igen fra 2029. 2028 er et hul-år.
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30', maanedlig_leje: 4500 },
+    { id: 2, startdato: '2029-01-01', maanedlig_leje: 6000 },
+  ]
+  assert.equal(leaseForAar(leases, 2028), null)
+  const g = aarsgrundlag(leases, 2028)
+  assert.equal(g.fra_dato, '')
+  assert.equal(g.til_dato, '')
+  assert.equal(g.mangler, true)
+  assert.equal(g.dage, 0)
+  assert.equal(g.dage360, 0)          // ikke 360 — der er ingen lejekontrakt
+  assert.equal(g.maanedlig_leje, 0)
+  // Kontraktårene er uberørte
+  assert.equal(aarsgrundlag(leases, 2026).dage360, 360)
+  assert.equal(aarsgrundlag(leases, 2026).mangler, false)
+})
+
 test('aarsgrundlag: udleder periode og leje fra den kontrakt der gælder i året', () => {
   const leases = [{ id: 1, startdato: '2025-08-05', maanedlig_leje: 6000, forbrug_aconto: { vand: 200, varme: 300 } }]
   const g = aarsgrundlag(leases, 2025)
@@ -185,10 +517,13 @@ test('aarsgrundlag: udleder periode og leje fra den kontrakt der gælder i året
   assert.equal(g.maanedlig_leje, 6000)
   assert.equal(g.dage, 149)          // faktiske kalenderdage
   assert.equal(g.dage360, 146)       // skemaets 30/360
-  // Uden kontrakt: hele året, ingen leje
+  assert.equal(g.mangler, false)
+  // Uden kontrakt: ingen periode og ingen leje (ADR-0002 — tidligere: hele året)
   const tom = aarsgrundlag([], 2025)
   assert.equal(tom.lease, null)
-  assert.equal(tom.fra_dato, '2025-01-01')
+  assert.equal(tom.fra_dato, '')
+  assert.equal(tom.til_dato, '')
+  assert.equal(tom.mangler, true)
   assert.equal(tom.maanedlig_leje, 0)
 })
 
@@ -211,6 +546,92 @@ test('periodeAfvigelse: opdager drift mellem gemt periode og lejekontrakt', () =
   assert.equal(periodeAfvigelse({ fra_dato: '2025-03-01', til_dato: '2025-12-31' }, aarsgrundlag([], 2025)), null)
 })
 
+// ── Kvittering på en periodeafvigelse ─────────────────────────────────────────
+//
+// Brugerens 2025 har gemt 6. august mod lejekontraktens 5. — den faktiske indflytning
+// skete dagen efter. Afvigelsen er altså rigtig, og advarslen ville ellers stå der for
+// evigt på et korrekt år. Kvitteringen gør den til en neutral note med begrundelsen.
+
+const LEASES = [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31', maanedlig_leje: 6000 }]
+const GEMT = { fra_dato: '2025-08-06', til_dato: '2025-12-31' }
+const BEGRUNDELSE = 'Faktisk indflytning skete 6. august, dagen efter kontraktens start.'
+
+// Et talsæt med en kvittering der er givet for præcis den afvigelse det bærer.
+function kvitteretSaet(saet = GEMT, leases = LEASES) {
+  const afvigelse = periodeAfvigelse(saet, aarsgrundlag(leases, 2025))
+  return { ...saet, periode_kvittering: periodeKvittering(afvigelse, BEGRUNDELSE) }
+}
+
+test('periodeAfvigelse: uden kvittering er afvigelsen ukvitteret', () => {
+  const a = periodeAfvigelse(GEMT, aarsgrundlag(LEASES, 2025))
+  assert.equal(a.kvitteret, false)
+  assert.equal(a.begrundelse, '')
+  assert.equal(a.foraeldet, false)
+})
+
+test('periodeAfvigelse: en begrundelse gør afvigelsen kvitteret', () => {
+  const a = periodeAfvigelse(kvitteretSaet(), aarsgrundlag(LEASES, 2025))
+  assert.ok(a, 'afvigelsen forsvinder ikke — den rapporteres stadig')
+  assert.equal(a.kvitteret, true)
+  assert.equal(a.begrundelse, BEGRUNDELSE)
+  assert.equal(a.foraeldet, false)
+  // Perioden rettes aldrig af en kvittering — begge sæt tal står uændret.
+  assert.equal(a.gemt.fra_dato, '2025-08-06')
+  assert.equal(a.afledt.fra_dato, '2025-08-05')
+  assert.equal(a.gemt.dage360, 145)
+})
+
+test('periodeAfvigelse: en tom begrundelse kvitterer ikke', () => {
+  for (const tekst of ['', '   ', null, undefined]) {
+    assert.equal(periodeKvittering(periodeAfvigelse(GEMT, aarsgrundlag(LEASES, 2025)), tekst), null)
+  }
+  const a = periodeAfvigelse({ ...GEMT, periode_kvittering: { begrundelse: '  ', gemt: GEMT, afledt: { fra_dato: '2025-08-05', til_dato: '2025-12-31' } } }, aarsgrundlag(LEASES, 2025))
+  assert.equal(a.kvitteret, false)
+})
+
+// Kvitteringen må ikke kunne dække over noget nyt: den er bundet til BEGGE de perioder
+// den blev givet for. Ændrer den ene sig, vender advarslen tilbage.
+test('periodeAfvigelse: ændres talsættets periode efter kvitteringen, vender advarslen tilbage', () => {
+  const saet = { ...kvitteretSaet(), fra_dato: '2025-09-01' }     // brugeren flytter fra-datoen
+  const a = periodeAfvigelse(saet, aarsgrundlag(LEASES, 2025))
+  assert.equal(a.kvitteret, false, 'kvitteringen gjaldt 6. august, ikke 1. september')
+  assert.equal(a.begrundelse, '')
+  assert.equal(a.foraeldet, true)
+  assert.equal(a.foraeldet_begrundelse, BEGRUNDELSE)              // teksten tabes ikke tavst
+})
+
+test('periodeAfvigelse: ændres lejekontrakten efter kvitteringen, vender advarslen tilbage', () => {
+  const rettet = [{ id: 1, startdato: '2025-07-01', slutdato: '2025-12-31', maanedlig_leje: 6000 }]
+  const a = periodeAfvigelse(kvitteretSaet(), aarsgrundlag(rettet, 2025))
+  assert.equal(a.kvitteret, false, 'kvitteringen gjaldt kontraktens 5. august, ikke 1. juli')
+  assert.equal(a.foraeldet, true)
+  assert.equal(a.foraeldet_begrundelse, BEGRUNDELSE)
+})
+
+// ADR-0002: en manglende periode gættes ikke — og den forklares heller ikke væk. En
+// kvittering på et fravær ville skrive "— – — (0 dage til skat.dk)" i årsregnskabets note
+// som en bevidst afvigelse: præcis den slags svar der ser legitimt ud, netop når
+// oplysningen mangler. Perioden skal udfyldes, ikke begrundes.
+test('periodeAfvigelse: en manglende periode kan ikke kvitteres væk', () => {
+  const uden = { fra_dato: '', til_dato: '' }
+  const g = aarsgrundlag(LEASES, 2025)
+  assert.equal(periodeKvittering(periodeAfvigelse(uden, g), BEGRUNDELSE), null)
+
+  // Og en kvittering der alligevel ligger i talsættet dækker ikke.
+  const a = periodeAfvigelse({ ...uden, periode_kvittering: { begrundelse: BEGRUNDELSE, gemt: uden, afledt: { fra_dato: '2025-08-05', til_dato: '2025-12-31' } } }, g)
+  assert.equal(a.kvitteret, false)
+  assert.equal(a.foraeldet, true)
+})
+
+test('periodeKvittering binder begrundelsen til begge de perioder den blev givet for', () => {
+  const k = periodeKvittering(periodeAfvigelse(GEMT, aarsgrundlag(LEASES, 2025)), `  ${BEGRUNDELSE}  `)
+  assert.equal(k.begrundelse, BEGRUNDELSE)                        // trimmet
+  assert.deepEqual(k.gemt, { fra_dato: '2025-08-06', til_dato: '2025-12-31' })
+  assert.deepEqual(k.afledt, { fra_dato: '2025-08-05', til_dato: '2025-12-31' })
+  // Uden en afvigelse er der intet at kvittere for.
+  assert.equal(periodeKvittering(null, BEGRUNDELSE), null)
+})
+
 test('udlejningsdage360: SKATs 30/360-konvention (md = 30 dage, år = 360)', () => {
   // Fuldt år = præcis 360, ikke 365 — jf. fodnoten på felt 748 / rubrik 207
   assert.equal(udlejningsdage360({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 360)
@@ -220,8 +641,19 @@ test('udlejningsdage360: SKATs 30/360-konvention (md = 30 dage, år = 360)', () 
   assert.equal(udlejningsdage({ fra_dato: '2025-08-05', til_dato: '2025-12-31' }), 149)
   // Skudår ændrer ikke 30/360-tallet
   assert.equal(udlejningsdage360({ fra_dato: '2024-01-01', til_dato: '2024-12-31' }), 360)
-  // Manglende datoer falder tilbage til måneder × 30 (allerede 30/360)
-  assert.equal(udlejningsdage360({}), 360)
+})
+
+// Skrevet om (ADR-0002): her stod tidligere udlejningsdage360({}) === 360 med
+// begrundelsen "falder tilbage til måneder × 30". Det er netop det tal SKAT forventer
+// for et helt udlejningsår, så det manglende input kunne indberettes ubemærket.
+test('udlejningsdage360 uden periode: 0 dage — intet at indberette i felt 748 / rubrik 207', () => {
+  assert.equal(udlejningsdage360({}), 0)
+  assert.equal(udlejningsdage360({ fra_maaned: 1, til_maaned: 12 }), 0)
+  assert.equal(udlejningsdage360({ fra_dato: '2025-08-06' }), 0)                 // ingen til-dato
+  assert.equal(udlejningsdage360({ til_dato: '2025-12-31' }), 0)                 // ingen fra-dato
+  // ... men et helt oplyst udlejningsår giver stadig præcis 360, ikke 365
+  assert.equal(udlejningsdage360({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 360)
+  assert.equal(udlejningsdage({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 365)
 })
 
 test('leaseForAar: vælger den kontrakt der er aktiv i året', () => {
@@ -248,6 +680,23 @@ test('prorataMaaneder: delmåned tæller forholdsmæssigt (5.–31. aug + fulde 
   assert.equal(prorataMaaneder({ fra_dato: '2025-01-01', til_dato: '2025-12-31' }), 12)
 })
 
+// Bevidst asymmetri (ADR-0002): dagstallene svarer 0 ved manglende periode, pro rata
+// gør IKKE. De to ting er ikke ens. Et dagstal ER den værdi der indberettes, og kan
+// derfor erstattes af teksten "periode mangler" — tallet vises aldrig. Pro rata-måneder
+// er en faktor på et beløb brugeren selv har tastet, og det beløb skal ende som et tal
+// i en sum; ingen tekst kan træde i stedet. Ville pro rata svare 0, forsvandt den
+// indtastede husleje tavst ud af udlejningsresultatet — netop den slags plausibelt
+// udseende tal ADR-0002 handler om, blot i beløb i stedet for i dage, og et tal der
+// indberettes i rubrik 111/112. Adfærden er derfor uændret her og markeres i stedet
+// med flaget på de visende flader.
+test('prorataMaaneder uden periode: uændret adfærd — flaget bærer oplysningen, ikke tallet', () => {
+  assert.equal(prorataMaaneder({}), 12)
+  assert.equal(prorataMaaneder({ fra_maaned: 8, til_maaned: 12 }), 5)
+  // Men dagstallene for samme talsæt nægter at gætte
+  assert.equal(udlejningsdage({ fra_maaned: 8, til_maaned: 12 }), 0)
+  assert.equal(udlejningsdage360({ fra_maaned: 8, til_maaned: 12 }), 0)
+})
+
 test('effektivBeloeb (datobaseret): leje forholdsmæssigt, ikke fulde 5 mdr', () => {
   const saet = {
     fra_dato: '2025-08-05', til_dato: '2025-12-31',
@@ -266,4 +715,337 @@ test('tomtSaet: uden pro rata er sum = rå værdier (ingen regression)', () => {
   const t = tomtSaet()
   t.indtaegter.leje = 72000
   assert.equal(sumIndtaegter(t), 72000)   // default 12 mdr, ingen prorata → uændret
+})
+
+// ── Hvilke år må oprettes ──────────────────────────────────────────────────────
+//
+// Reglen stod ordret to steder — i Årets tal og i POST /api/years — og ingen af de
+// to kopier var testet. Den bor nu her, så serveren og klienten svarer det samme.
+
+test('aarsinterval: tidligste start → seneste slut på tværs af lejekontrakter', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' },
+    { id: 2, startdato: '2026-01-01', slutdato: '2027-06-30' },
+  ]
+  assert.deepEqual(aarsinterval(leases), { foerste: 2025, sidste: 2027 })
+})
+
+test('aarsinterval: en åben slutdato giver ingen øvre grænse', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' },
+    { id: 2, startdato: '2026-01-01', slutdato: '' },
+  ]
+  assert.deepEqual(aarsinterval(leases), { foerste: 2025, sidste: null })
+})
+
+test('aarsinterval uden lejekontrakter: ingen grænser at udlede', () => {
+  assert.deepEqual(aarsinterval([]), { foerste: null, sidste: null })
+  assert.deepEqual(aarsinterval(null), { foerste: null, sidste: null })
+})
+
+test('maaAarOprettes: et år inden for lejekontrakterne må oprettes', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+  assert.deepEqual(maaAarOprettes(leases, 2026), { ok: true, begrundelse: '' })
+  assert.deepEqual(maaAarOprettes(leases, 2025), { ok: true, begrundelse: '' })
+  assert.deepEqual(maaAarOprettes(leases, 2027), { ok: true, begrundelse: '' })
+})
+
+test('maaAarOprettes: et år før den tidligste lejekontrakt afvises, med året nævnt', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+  assert.deepEqual(maaAarOprettes(leases, 2024), {
+    ok: false, begrundelse: 'Lejekontrakterne starter i 2025 — 2024 kan ikke oprettes',
+  })
+})
+
+test('maaAarOprettes: et år efter den seneste lejekontrakt afvises, med året nævnt', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+  assert.deepEqual(maaAarOprettes(leases, 2028), {
+    ok: false, begrundelse: 'Lejekontrakterne slutter i 2027 — 2028 kan ikke oprettes',
+  })
+})
+
+test('maaAarOprettes: en åben slutdato giver ingen øvre grænse', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' },
+    { id: 2, startdato: '2026-01-01', slutdato: '' },
+  ]
+  assert.equal(maaAarOprettes(leases, 2030).ok, true)
+  assert.equal(maaAarOprettes(leases, 2199).ok, true)
+})
+
+// Hul-året er den vej ind til det 360-tal ADR-0002 fjernede: 2028 blev tavst
+// accepteret af begge implementationer og fik hele kalenderåret som udlejningsperiode.
+test('maaAarOprettes: et hul-år mellem to lejekontrakter afvises, med året nævnt', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' },
+    { id: 2, startdato: '2029-01-01', slutdato: '' },
+  ]
+  assert.deepEqual(maaAarOprettes(leases, 2028), {
+    ok: false, begrundelse: 'Ingen lejekontrakt dækker 2028 — opret lejekontrakten, eller vælg et andet år',
+  })
+  // Årene omkring hullet er uberørte — intervallet alene ville have sagt ja til 2028
+  assert.deepEqual(aarsinterval(leases), { foerste: 2025, sidste: null })
+  assert.equal(maaAarOprettes(leases, 2027).ok, true)
+  assert.equal(maaAarOprettes(leases, 2029).ok, true)
+})
+
+test('maaAarOprettes uden lejekontrakter: intet år kan oprettes', () => {
+  // Uden kontrakt er der ingen periode at udlede, og året ville fødes uden en
+  // (ADR-0002). Prisen er accepteret: lejekontrakten oprettes først.
+  assert.deepEqual(maaAarOprettes([], 2026), {
+    ok: false, begrundelse: 'Ingen lejekontrakt dækker 2026 — opret lejekontrakten, eller vælg et andet år',
+  })
+  assert.equal(maaAarOprettes(null, 2026).ok, false)
+})
+
+test('maaAarOprettes: et årstal der ikke er et årstal afvises før alt andet', () => {
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '' }]
+  for (const skrald of ['', 'nej', null, undefined, NaN, 0, 1899, 2201, 2026.5]) {
+    assert.deepEqual(maaAarOprettes(leases, skrald), { ok: false, begrundelse: 'Angiv et gyldigt årstal' },
+      `${String(skrald)} er ikke et årstal`)
+  }
+  assert.equal(maaAarOprettes(leases, '2026').ok, true)   // fra et tekstfelt
+})
+
+// Et år der ikke må oprettes, er præcis et år uden lejekontrakt — de to svar kan ikke
+// komme til at være uenige om hvad der findes en kontrakt for.
+test('maaAarOprettes siger kun ja til år hvor en lejekontrakt findes', () => {
+  const leases = [
+    { id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' },
+    { id: 2, startdato: '2029-01-01', slutdato: '2030-12-31' },
+  ]
+  for (let aar = 2023; aar <= 2032; aar++) {
+    assert.equal(maaAarOprettes(leases, aar).ok, leaseForAar(leases, aar) !== null, String(aar))
+  }
+})
+
+// ── Et år fødes med sin udlejningsperiode ──────────────────────────────────────
+//
+// Prefillet lå i skærmkomponenten, så serveren kunne kun tage imod det talsæt
+// klienten sendte — `budget ?? {}`. Et år oprettet direkte mod API'et fødtes uden
+// periode. Prefillet bor nu her, så begge veje giver samme talsæt (ADR-0002).
+
+test('prefillSaet: et nyt år fødes med lejekontraktens periode og leje', () => {
+  const leases = [{
+    id: 1, startdato: '2025-08-05', slutdato: '2025-12-31',
+    maanedlig_leje: 4500, forbrug_aconto: { vand: 300, varme: 300 },
+  }]
+  const s = prefillSaet({
+    leases, aar: 2025,
+    property: { grundskyld_aarlig: 7488 },
+    loans: [{ id: 1, restgaeld: 1000000, rente_pct: 4 }],
+  })
+  assert.equal(s.fra_dato, '2025-08-05')
+  assert.equal(s.til_dato, '2025-12-31')
+  assert.equal(manglerPeriode(s), false)
+  assert.equal(udlejningsdage360(s), 146)      // dagstallet findes fra fødslen
+  assert.equal(s.indtaegter.leje, 4500)        // månedsbeløb …
+  assert.equal(s.prorata['indtaegter.leje'], true)   // … med pro rata slået til
+  assert.equal(s.indtaegter.vand, 300)
+  assert.equal(s.udgifter.varme, 300)
+  assert.equal(s.udgifter.grundskyld, 7488)    // årsbeløb, ingen pro rata
+  assert.equal(s.prorata['udgifter.grundskyld'], undefined)
+  assert.equal(s.renteudgifter[1], 40000)      // skøn: restgæld × rente
+})
+
+test('prefillSaet: hvert grundlag får sit eget talsæt, ikke det samme objekt', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const a = prefillSaet({ leases, aar: 2026 })
+  const b = prefillSaet({ leases, aar: 2026 })
+  assert.deepEqual(a, b)
+  a.indtaegter.leje = 1
+  assert.equal(b.indtaegter.leje, 6000)        // budget og faktisk deler ikke tal
+})
+
+// Reglen skal blive ét sted. Testen læser de to kaldere og fastholder at ingen af dem
+// bærer sin egen kopi — det var netop to ordrette kopier med hver sin fejltekst (den
+// ene med punktum, den anden uden) der gjorde serveren og klienten uenige.
+test('serveren og klienten kalder samme regel — ingen af dem har sin egen fejltekst', () => {
+  const kilde = (sti) => readFileSync(new URL(sti, import.meta.url), 'utf8')
+  for (const fil of ['../../server.js', '../components/AaretsTal.jsx']) {
+    const src = kilde(fil)
+    assert.match(src, /maaAarOprettes/, `${fil} skal spørge beregningslaget`)
+    assert.doesNotMatch(src, /Lejekontrakterne (starter|slutter)/, `${fil} må ikke skrive begrundelsen selv`)
+  }
+  // Og serveren lader årets talsæt fødes med sin periode frem for at tage imod det
+  // som det kommer (ADR-0002). Selve reglen for hvad et nyt år fødes med, er testet
+  // ovenfor — her fastholdes kun at serveren spørger den.
+  assert.match(kilde('../../server.js'), /saetTilNytAar/)
+})
+
+// ── Et allerede oprettet år der bliver et hul-år ───────────────────────────────
+//
+// Reglen gælder OPRETTELSEN. Rettes lejekontrakten bagefter, så et eksisterende år
+// ikke længere er dækket, røres årets gemte tal ikke: de er indtastet af brugeren og
+// kan være indberettet. Appen rapporterer — den retter ikke, og den spærrer ikke for
+// redigering, for så kunne året hverken rettes eller gøres færdigt. Fraværet af en
+// kontrakt er synligt på `lease`/`mangler` i årsgrundlaget, som fladen viser.
+test('et eksisterende år beholder sine egne tal selvom ingen lejekontrakt dækker det', () => {
+  const saet = { fra_dato: '2028-01-01', til_dato: '2028-12-31', indtaegter: { leje: 6000 }, prorata: { 'indtaegter.leje': true } }
+  const leases = [{ id: 1, startdato: '2025-08-05', slutdato: '2027-06-30' }]
+
+  // Årets gemte periode og beløb er uberørte — intet gættes om, intet nulstilles
+  assert.equal(udlejningsdage(saet), 366)
+  assert.equal(udlejningsdage360(saet), 360)
+  assert.equal(effektivBeloeb(saet, 'indtaegter', 'leje'), 72000)
+
+  // … men året kan ikke oprettes på ny, og grundlaget siger at kontrakten mangler
+  assert.equal(maaAarOprettes(leases, 2028).ok, false)
+  const g = aarsgrundlag(leases, 2028)
+  assert.equal(g.lease, null)
+  assert.equal(g.mangler, true)
+  // Uden kontrakt er der ingen afvigelse at rapportere — der er intet at afstemme mod
+  assert.equal(periodeAfvigelse(saet, g), null)
+})
+
+// `budget ?? prefill` var ikke nok: et indsendt `{}` er ikke fraværende, og året blev
+// født uden periode ad præcis den vej ADR-0002 lukker.
+test('saetTilNytAar: uden indsendt talsæt fødes året med prefillet', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const kontekst = { leases, property: null, loans: [], aar: 2026 }
+  assert.deepEqual(saetTilNytAar(kontekst, undefined), prefillSaet(kontekst))
+  assert.deepEqual(saetTilNytAar(kontekst, null), prefillSaet(kontekst))
+})
+
+test('saetTilNytAar: et indsendt talsæt uden periode får lejekontraktens', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const kontekst = { leases, property: null, loans: [], aar: 2026 }
+  // Et tomt talsæt er ikke et fraværende talsæt — men året fødes stadig med sin periode
+  const tomt = saetTilNytAar(kontekst, {})
+  assert.equal(manglerPeriode(tomt), false)
+  assert.equal(tomt.fra_dato, '2026-01-01')
+  assert.equal(tomt.til_dato, '2026-12-31')
+  // Kun perioden udfyldes — kalderens egne tal prefilles ikke oven i
+  const eget = saetTilNytAar(kontekst, { indtaegter: { leje: 1234 }, til_dato: '2026-06-30' })
+  assert.equal(eget.indtaegter.leje, 1234)
+  assert.equal(eget.fra_dato, '2026-01-01')
+  assert.equal(eget.til_dato, '2026-06-30')   // kalderens egen dato står — kun den manglende udfyldes
+})
+
+test('saetTilNytAar: en indsendt periode overstyres ikke', () => {
+  const leases = [{ id: 1, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  const eget = { fra_dato: '2026-02-01', til_dato: '2026-11-30', indtaegter: { leje: 1234 } }
+  assert.deepEqual(saetTilNytAar({ leases, aar: 2026 }, eget), eget)
+})
+
+test('aarsgrundlag bærer selv sit år, så en flade ikke skal have det ved siden af', () => {
+  assert.equal(aarsgrundlag([{ id: 1, startdato: '2026-01-01' }], 2026).aar, 2026)
+  assert.equal(aarsgrundlag([], 2028).aar, 2028)
+})
+
+// ── Renteskønnet: lånets startdato gør skønnet årsafhængigt ────────────────────
+//
+// Skønnet var før årsuafhængigt: et lån optaget i august fik et helt års rente
+// foreslået på optagelsesåret. Restgæld × rente er stadig svaret på "hvad koster
+// lånet på et helt år" (estimeretAarligRente) — renteskoen svarer på hvad det kostede
+// i ét bestemt år.
+
+test('renteskoen: et lån der løb hele året giver det uforkortede årsskøn', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2024-06-01', restgaeld_dato: '2025-06-30' }
+  const s = renteskoen(laan, 2025)
+  assert.equal(s.beloeb, 45000)
+  assert.equal(s.beloeb, estimeretAarligRente(laan))   // uændret i forhold til før startdatoen
+  assert.equal(s.dage, 365)
+})
+
+// Den observerede fejl: lånet på 1.500.000 kr. til 3 % blev prefillet med 45.000 kr. på
+// 2025, hvor det først blev optaget omkring 9. august. Brugeren rettede i hånden til
+// 17.849 kr. — omtrent 145 dages rente.
+test('renteskoen: et lån optaget midt i året skæres til den del af året det løb', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
+  const s = renteskoen(laan, 2025)
+  assert.equal(s.dage, 145)        // 9. aug–31. dec, faktiske kalenderdage inkl. startdagen
+  assert.equal(s.dageIAar, 365)
+  assert.equal(s.beloeb, 17877)    // 45.000 × 145/365 — tæt på brugerens egne 17.849
+  assert.equal(s.helAar, 45000)    // det uforkortede årsskøn står stadig
+})
+
+test('renteskoen: et skudår måles mod sine egne 366 dage', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2020-01-01' }
+  assert.equal(renteskoen(laan, 2028).dage, 366)
+  assert.equal(renteskoen(laan, 2028).beloeb, 45000)   // hele året → uforkortet
+})
+
+test('renteskoen: et år før lånets startdato giver intet skøn', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
+  const s = renteskoen(laan, 2024)
+  assert.equal(s.beloeb, 0)
+  assert.equal(s.dage, 0)
+  assert.equal(s.foerOptagelse, true)
+  assert.equal(renteskoen(laan, 2025).foerOptagelse, false)
+  // Optages lånet på årets sidste dag, er der én dags rente — ikke ingen
+  assert.equal(renteskoen({ ...laan, startdato: '2025-12-31' }, 2025).dage, 1)
+  assert.equal(renteskoen({ ...laan, startdato: '2025-12-31' }, 2025).foerOptagelse, false)
+})
+
+// Valget ved manglende startdato: HELE året, markeret. ADR-0002 gætter ikke en
+// manglende udlejningsperiode, men det er et dagstal der INDBERETTES, og 0 er der det
+// ærlige svar. Her er svaret et beløb: et skøn på 0 ville se ud som "ingen rente" —
+// et forkert tal der ser legitimt ud — mens et helt års rente er præcis det feltet
+// spørger om. De lån der allerede står i DB'en har ingen startdato og skal give samme
+// skøn som før.
+test('renteskoen: uden startdato dækker skønnet hele året — og siger det', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3 }
+  const s = renteskoen(laan, 2025)
+  assert.equal(s.beloeb, 45000)
+  assert.equal(s.dage, 365)
+  assert.equal(s.manglerStartdato, true)
+  assert.equal(s.foerOptagelse, false)
+  // En startdato der ikke er en dato er lige så uoplyst som ingen startdato
+  assert.equal(renteskoen({ ...laan, startdato: '9/8-2025' }, 2025).manglerStartdato, true)
+  assert.equal(renteskoen({ ...laan, startdato: '9/8-2025' }, 2025).beloeb, 45000)
+  assert.equal(renteskoen({ ...laan, startdato: '2025-08-09' }, 2025).manglerStartdato, false)
+})
+
+// Peildatoen begynder at gøre noget. Den blev indført for at fjerne den hardkodede
+// 31/12-antagelse, men skønnet læste den ikke — og en saldo målt 31.12.2026 gav
+// 45.000 kr. som skøn for 2025. Der fremskrives stadig ingen saldo; der advares.
+test('renteskoen: peildatoen advarer når saldoen er målt langt fra året', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09', restgaeld_dato: '2026-12-31' }
+  // Præcis den DB der gav 45.000 kr. for 2025: saldoen er målt efter årets udgang
+  assert.match(renteskoen(laan, 2025).peildatoAdvarsel, /2026-12-31/)
+  // Bankens opgørelse pr. seneste årsskifte er det bedste der findes — ingen advarsel
+  assert.equal(renteskoen({ ...laan, restgaeld_dato: '2024-12-31' }, 2025).peildatoAdvarsel, '')
+  // En saldo målt inde i selve året er heller ikke langt fra
+  assert.equal(renteskoen({ ...laan, restgaeld_dato: '2025-09-30' }, 2025).peildatoAdvarsel, '')
+  // Langt FØR året: saldoen er forældet, lånet er afdraget siden
+  assert.match(renteskoen({ ...laan, restgaeld_dato: '2023-12-31' }, 2025).peildatoAdvarsel, /2023-12-31/)
+  // En uoplyst peildato er ikke en fejl — der advares kun om en saldo der ER dateret
+  assert.equal(renteskoen({ ...laan, restgaeld_dato: '' }, 2025).peildatoAdvarsel, '')
+  // Uden et skøn er der intet at advare om
+  assert.equal(renteskoen(laan, 2024).peildatoAdvarsel, '')
+})
+
+// Grænsen er symmetrisk: en saldo målt lige EFTER året er lige så tæt på årets egen som
+// en målt lige før. En bankopgørelse dateret 2. januar er ikke "langt fra" året før.
+test('renteskoen: peildato-tolerancen er et halvt år til begge sider', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3 }
+  const advarer = (dato, aar) => !!renteskoen({ ...laan, restgaeld_dato: dato }, aar).peildatoAdvarsel
+  assert.equal(advarer('2026-01-02', 2025), false)   // 1 dag efter året — bankens nytårsopgørelse
+  assert.equal(advarer('2026-07-02', 2025), false)   // 183 dage efter — netop inden for
+  assert.equal(advarer('2026-07-03', 2025), true)    // 184 dage efter — uden for
+  assert.equal(advarer('2024-07-02', 2025), false)   // 183 dage før — netop inden for
+  assert.equal(advarer('2024-07-01', 2025), true)    // 184 dage før — uden for
+})
+
+test('prefillSaet: et nyt år fødes med ÅRETS renteskøn, ikke et helt års', () => {
+  const laan = [{ id: 1, restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }]
+  const kontrakt2025 = [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31', maanedlig_leje: 4500 }]
+  const kontrakt2026 = [{ id: 2, startdato: '2026-01-01', slutdato: '', maanedlig_leje: 6000 }]
+  assert.equal(prefillSaet({ leases: kontrakt2025, loans: laan, aar: 2025 }).renteudgifter[1], 17877)
+  assert.equal(prefillSaet({ leases: kontrakt2026, loans: laan, aar: 2026 }).renteudgifter[1], 45000)
+})
+
+test('saetTilNytAar: en indtastet rente overskrives aldrig af et skøn', () => {
+  const laan = [{ id: 1, restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }]
+  const kontekst = { leases: [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31' }], loans: laan, aar: 2025 }
+  const eget = saetTilNytAar(kontekst, { renteudgifter: { 1: 17849 } })
+  assert.equal(eget.renteudgifter[1], 17849)   // brugerens eget tal fra banken står
+})
+
+// Et årstal kan komme som tekst. `'2025' + 1` er "20251", så et årsskøn ville ellers
+// blive regnet på år 20251 — tavst forkert i et felt der ender på selvangivelsen.
+test('renteskoen: et årstal som tekst regnes som det år det er', () => {
+  const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
+  assert.deepEqual(renteskoen(laan, '2025'), renteskoen(laan, 2025))
 })

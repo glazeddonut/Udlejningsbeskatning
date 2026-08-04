@@ -1,50 +1,41 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
-import { kr } from '../lib/format.js'
-import { normaliserSaet } from '../lib/saet.js'
 import { genererRegnskabPdf } from '../lib/pdf.js'
-import {
-  sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter, sumRenter, personOpgoerelse, resolveFordeling,
-  effektivBeloeb, udlejningsdage,
-} from '../lib/beregning.js'
+import { aarsopgoerelse } from '../lib/aarsopgoerelse.js'
 
-const INDTAEGT_RAEKKER = [
-  ['leje', 'Husleje (ekskl. forbrug)'],
-  ['vand', 'Vand (opkrævet)'],
-  ['varme', 'Varme (opkrævet)'],
-  ['andet', 'Anden indtægt'],
-]
-const UDGIFT_RAEKKER = [
-  ['grundskyld', 'Grundskyld (ejendomsskat)'],
-  ['faellesudgifter', 'Fællesudgifter (drift)'],
-  ['forsikring', 'Forsikring'],
-  ['vedligeholdelse', 'Vedligeholdelse'],
-  ['vand', 'Vand (afholdt)'],
-  ['varme', 'Varme (afholdt)'],
-  ['administration', 'Administration'],
-  ['renovation', 'Renovation'],
-  ['andet', 'Andet'],
-]
+// Årsregnskabet er en ren tabelrenderer af opstillingen fra aarsopgoerelse.js.
+// Alt indhold — hoved, sektioner, rækker, bilagsoversigt og note — kommer derfra,
+// så skærmen og PDF'en viser det samme regnskab og ikke kan drive fra hinanden.
+// Den eneste forskel er de vedhæftede bilagsfiler, som kun PDF'en kan bære.
 
-export default function Aarsregnskab({ years, persons, property, loans, settings }) {
+export default function Aarsregnskab({ years, persons, property, loans, leases, settings }) {
   const sorterede = [...years].sort((a, b) => b.aar - a.aar)
   const [valgtAar, setValgtAar] = useState(sorterede[0]?.aar ?? null)
   const [grundlag, setGrundlag] = useState('faktisk')  // regnskab bygger normalt på faktiske tal
-
+  const [bilag, setBilag] = useState([])
   const [genererer, setGenererer] = useState(false)
-  const year = years.find(y => y.aar === valgtAar)
-  const saet = year ? normaliserSaet(year[grundlag]) : null
 
-  const downloadPdf = async () => {
-    if (!year || !saet) return
+  // Bilagene hentes rå (alle år) — årsopgørelsen filtrerer og nummererer dem selv,
+  // så bilagsoversigten på skærmen og i PDF'en kommer samme sted fra.
+  useEffect(() => {
+    let aktiv = true
+    api.get('/bilag').then(b => { if (aktiv) setBilag(b) }).catch(() => { if (aktiv) setBilag([]) })
+    return () => { aktiv = false }
+  }, [])
+
+  const opgoerelse = aarsopgoerelse({
+    aar: valgtAar, grundlag, years, leases, persons, property, loans, settings, bilag,
+  })
+
+  const hentPdf = async () => {
+    if (!opgoerelse) return
     setGenererer(true)
     try {
-      const bilag = await api.get(`/bilag?aar=${year.aar}`)
-      const bytes = await genererRegnskabPdf({ year, saet, grundlag, persons, property, loans, settings, bilag })
+      const bytes = await genererRegnskabPdf(opgoerelse)
       const blob = new Blob([bytes], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url; a.download = `regnskab-${year.aar}.pdf`; a.click()
+      a.href = url; a.download = `regnskab-${opgoerelse.aar}.pdf`; a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
       alert('Kunne ikke generere PDF: ' + (e.message || e))
@@ -76,99 +67,102 @@ export default function Aarsregnskab({ years, persons, property, loans, settings
               <option value="budget">Budget (forskud)</option>
             </select>
           </div>
+          {/* Ét regnskab, to måder at få det ud af skærmen på — knapperne må ikke
+              antyde to forskellige dokumenter. */}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button className="btn ghost" onClick={() => window.print()} disabled={!year}>🖨 Print</button>
-            <button className="btn primary" onClick={downloadPdf} disabled={!year || genererer}>{genererer ? 'Genererer…' : '⬇ Download PDF (med bilag)'}</button>
+            <button className="btn ghost" onClick={() => window.print()} disabled={!opgoerelse}>🖨 Print regnskabet</button>
+            <button className="btn primary" onClick={hentPdf} disabled={!opgoerelse || genererer}>
+              {genererer ? 'Genererer…' : '⬇ Gem som PDF (med bilagsfiler)'}
+            </button>
           </div>
         </div>
       </div>
 
-      {!year && <div className="card no-print"><p className="empty-state">Opret et år under “Årets tal” først.</p></div>}
+      {!opgoerelse && <div className="card no-print"><p className="empty-state">Opret et år under “Årets tal” først.</p></div>}
 
-      {year && saet && (
-        <Regnskab saet={saet} year={year} grundlag={grundlag} persons={persons} property={property} loans={loans} settings={settings} />
-      )}
+      {opgoerelse && <Opstilling opstilling={opgoerelse.opstilling} />}
     </>
   )
 }
 
-function Regnskab({ saet, year, grundlag, persons, property, loans, settings }) {
-  const indt = sumIndtaegter(saet)
-  const udg = sumFradragsUdgifter(saet)
-  const resultat = resultatFoerRenter(saet)
-  const renter = sumRenter(saet)
-  const opg = personOpgoerelse(saet, { persons, property, loans, fordeling: resolveFordeling(settings, persons) })
+const klasser = (...c) => c.filter(Boolean).join(' ') || undefined
 
+// Én tabel fra opstillingen: kolonneoverskrifter og celler, begge kolonnestyret.
+// Både afstemningen og bilagsoversigten renderes herigennem, så de to ikke kan drive
+// fra hinanden. `raekkeKlasse` lader afstemningen markere sine rækker.
+function OpstillingsTabel({ tabel, klasse, raekkeKlasse = () => undefined }) {
+  if (tabel.raekker.length === 0) {
+    return <table className="rg"><tbody><tr><td>{tabel.tom_tekst}</td><td className="num" /></tr></tbody></table>
+  }
+  return (
+    <table className={klasser('rg', klasse)}>
+      <thead>
+        <tr>
+          {tabel.kolonner.map(k => <th key={k.id} className={k.num ? 'num' : undefined}>{k.label}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {tabel.raekker.map(r => (
+          <tr key={r.id} className={raekkeKlasse(r)}>
+            {tabel.kolonner.map(k => (
+              <td key={k.id} className={klasser(k.num && 'num', k.id === 'status' && 'status')}>
+                {r.celler[k.id]}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function Opstilling({ opstilling }) {
+  const { hoved, sektioner, afstemning, bilagsoversigt, note } = opstilling
   return (
     <div className="regnskab">
       <div className="rg-head">
-        <h2>Regnskab for udlejning · {year.aar}</h2>
+        <h2>{hoved.overskrift}</h2>
         <div className="rg-meta">
-          {property?.navn || 'Ejendom'}{property?.adresse ? `, ${property.adresse}` : ''}<br />
-          Ejere: {persons.map(p => `${p.navn} (${property?.ejerandele?.[p.id] ?? 0} %)`).join(' · ')}<br />
-          Grundlag: {grundlag === 'faktisk' ? 'faktiske tal' : 'budget'} · Udlejet til nærtstående: {saet.naertstaaende ? 'ja' : 'nej'} · {udlejningsdage(saet)} udlejningsdage
+          {hoved.linjer.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       </div>
 
-      <h3 className="rg-sektion">Indtægter</h3>
-      <table className="rg">
-        <tbody>
-          {INDTAEGT_RAEKKER.filter(([k]) => saet.indtaegter[k]).map(([k, label]) => (
-            <tr key={k}><td>{label}</td><td className="num">{kr(effektivBeloeb(saet, 'indtaegter', k))}</td></tr>
-          ))}
-          <tr className="sum"><td>Indtægter i alt</td><td className="num">{kr(indt)}</td></tr>
-        </tbody>
-      </table>
-
-      <h3 className="rg-sektion">Fradragsberettigede udgifter</h3>
-      <table className="rg">
-        <tbody>
-          {UDGIFT_RAEKKER.filter(([k]) => saet.udgifter[k]).map(([k, label]) => (
-            <tr key={k}><td>{label}</td><td className="num">{kr(effektivBeloeb(saet, 'udgifter', k))}</td></tr>
-          ))}
-          <tr className="sum"><td>Udgifter i alt</td><td className="num">{kr(udg)}</td></tr>
-        </tbody>
-      </table>
-
-      <h3 className="rg-sektion">Resultat</h3>
-      <table className="rg">
-        <tbody>
-          <tr className="sum"><td>Udlejningsresultat før renter</td><td className="num">{kr(resultat)}</td></tr>
-        </tbody>
-      </table>
-
-      <h3 className="rg-sektion">Fordeling pr. ejer</h3>
-      <table className="rg">
-        <tbody>
-          {opg.map(o => (
-            <tr key={o.personId}>
-              <td>
-                {o.navn}{o.erBeskattet ? '' : ' (beskattes ikke)'} — resultat {kr(o.resultatAndel)}, renter {kr(o.renter)}
-              </td>
-              <td className="num">{kr(o.nettoKapitalindkomst)}</td>
-            </tr>
-          ))}
-          <tr className="sum"><td>Renteudgifter i alt (personlige, kapitalindkomst)</td><td className="num">{kr(renter)}</td></tr>
-        </tbody>
-      </table>
-
-      {saet.forbedringer > 0 && (
-        <>
-          <h3 className="rg-sektion">Forbedringer (ikke fradrag)</h3>
+      {/* Sektionens forklaring står under tabellen — i dag kun udgifternes forklaring af
+          den udlejede andel (ADR-0003). Den kommer fra opstillingen, ikke herfra, så
+          PDF'en skriver ordret det samme. Er den tom, står der ingenting. */}
+      {sektioner.map(s => (
+        <section key={s.id}>
+          <h3 className="rg-sektion">{s.titel}</h3>
           <table className="rg">
             <tbody>
-              <tr><td>Forbedringer i året — tillægges anskaffelsessummen</td><td className="num">{kr(saet.forbedringer)}</td></tr>
+              {s.raekker.map(r => (
+                <tr key={r.id} className={[r.sum ? 'sum' : '', r.hjemloes ? 'hjemloes' : ''].filter(Boolean).join(' ')}>
+                  <td>{r.label}</td>
+                  <td className="num">{r.vaerdi}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
-        </>
+          {s.forklaring && <p className="rg-forklaring">{s.forklaring}</p>}
+        </section>
+      ))}
+
+      {/* Afstemningen findes kun ved grundlaget faktisk — bilag dokumenterer det der
+          er sket, ikke det der er budgetteret. Ved budget er den fraværende (ADR-0005).
+          Statussen står som TEKST i sin egen celle og ikke kun som en farve, så den
+          også overlever printet, hvor alt tvinges til sort. */}
+      {afstemning && (
+        <section>
+          <h3 className="rg-sektion">{afstemning.titel}</h3>
+          <OpstillingsTabel tabel={afstemning} klasse="afstemning" raekkeKlasse={r => `afst-${r.status}`} />
+          <p className="rg-forklaring">{afstemning.forklaring}</p>
+        </section>
       )}
 
-      <p className="rg-note">
-        Regnskabet er udarbejdet efter de almindelige skatteregler for udlejning til nærtstående
-        (forældrekøb). Renteudgifter er personlige (kapitalindkomst) og indgår ikke i
-        udlejningsresultatet. Forbedringsudgifter er ikke fradragsberettigede.
-        Beløb er baseret på de indtastede tal og skal verificeres mod bilag og skat.dk.
-      </p>
+      <h3 className="rg-sektion">{bilagsoversigt.titel}</h3>
+      <OpstillingsTabel tabel={bilagsoversigt} />
+
+      <p className="rg-note">{note}</p>
     </div>
   )
 }

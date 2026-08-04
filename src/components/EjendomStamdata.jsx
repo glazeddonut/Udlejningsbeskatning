@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, pct } from '../lib/format.js'
+import { pct } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
 const TYPER = [
@@ -28,10 +28,16 @@ function standardAndele(persons) {
 export default function EjendomStamdata({ property, persons, reload }) {
   const [e, setE] = useState(property || tomEjendom(persons))
   const [dirty, setDirty] = useState(false)
+  const [fejl, setFejl] = useState('')
   const upd = (patch) => { setE({ ...e, ...patch }); setDirty(true) }
-  const updAndel = (pid, v) => { setE({ ...e, ejerandele: { ...e.ejerandele, [pid]: parseNum(v) } }); setDirty(true) }
+  const updAndel = (pid, v) => { setE({ ...e, ejerandele: { ...e.ejerandele, [pid]: v } }); setDirty(true) }
 
-  const gem = async () => { await api.put('/property', e); setDirty(false); reload() }
+  // Afviser serveren tallene — fx en ejerandel over 100 % — skal det siges, ikke
+  // sluges: ellers ser en mislykket gemning ud som en gennemført.
+  const gem = async () => {
+    try { await api.put('/property', e) } catch (err) { setFejl(err.message); return }
+    setFejl(''); setDirty(false); reload()
+  }
 
   const andelSum = persons.reduce((s, p) => s + (Number(e.ejerandele?.[p.id]) || 0), 0)
   const andelOk = Math.abs(andelSum - 100) < 0.01 || persons.length === 0
@@ -46,13 +52,13 @@ export default function EjendomStamdata({ property, persons, reload }) {
       </div>
 
       <div className="grid">
-        <TextField label="Navn / kaldenavn" value={e.navn} onChange={v => upd({ navn: v })} placeholder="fx Dronning Margrethes Vej 3" />
+        <TextField label="Navn / kaldenavn" value={e.navn} onChange={v => upd({ navn: v })} placeholder="fx Bøgevej 12, 2. th" />
         <TextField label="Adresse" value={e.adresse} onChange={v => upd({ adresse: v })} />
         <SelectField label="Type" value={e.type} onChange={v => upd({ type: v })} options={TYPER} />
         <TextField label="Købsdato" type="date" value={e.koebsdato} onChange={v => upd({ koebsdato: v })} />
-        <NumberField label="Anskaffelsessum" hint="inkl. købsomkostninger" value={e.anskaffelsessum} onChange={v => upd({ anskaffelsessum: parseNum(v) })} />
-        <NumberField label="Forbedringer før udlejning" hint="ikke fradrag — tillægges anskaffelsessum" value={e.forbedringer_foer_udlejning} onChange={v => upd({ forbedringer_foer_udlejning: parseNum(v) })} />
-        <NumberField label="Grundskyld (ejendomsskat) pr. år" value={e.grundskyld_aarlig} onChange={v => upd({ grundskyld_aarlig: parseNum(v) })} />
+        <NumberField label="Anskaffelsessum" hint="inkl. købsomkostninger" value={e.anskaffelsessum} onChange={v => upd({ anskaffelsessum: v })} />
+        <NumberField label="Forbedringer før udlejning" hint="ikke fradrag — tillægges anskaffelsessum" value={e.forbedringer_foer_udlejning} onChange={v => upd({ forbedringer_foer_udlejning: v })} />
+        <NumberField label="Grundskyld (ejendomsskat) pr. år" value={e.grundskyld_aarlig} onChange={v => upd({ grundskyld_aarlig: v })} />
       </div>
 
       <div style={{ marginTop: 18 }}>
@@ -80,6 +86,7 @@ export default function EjendomStamdata({ property, persons, reload }) {
 
       <div style={{ marginTop: 14 }}>
         <button className="btn primary" onClick={gem} disabled={!dirty}>Gem lejlighed</button>
+        {fejl && <span className="badge warn" style={{ marginLeft: 8 }}>{fejl}</span>}
       </div>
     </div>
   )

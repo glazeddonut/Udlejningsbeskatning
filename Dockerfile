@@ -26,6 +26,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Kopiér server + det byggede frontend fra build-stagen
 COPY server.js ./
+# Serveren deler domænemoduler med frontenden (i dag bilagsnummereringen). Hele src/lib
+# kopieres med vilje: en fil-for-fil-liste ville først briste i produktion den dag et
+# delt modul får en ny import.
+COPY src/lib ./src/lib
 COPY --from=build /app/dist ./dist
 
 # Persistent data-mappe (mountes som volume) — kun /data skal være skrivbar for node.

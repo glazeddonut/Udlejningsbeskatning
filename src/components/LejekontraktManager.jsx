@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, kr } from '../lib/format.js'
+import { kr } from '../lib/format.js'
 import { TextField, NumberField } from './fields.jsx'
 
 const tomLejekontrakt = () => ({
@@ -79,7 +79,14 @@ function LejeRow({ lease, reload }) {
 function LejeForm({ initial, onSave, onCancel, onDelete }) {
   const [l, setL] = useState(initial || tomLejekontrakt())
   const upd = (patch) => setL({ ...l, ...patch })
-  const updForbrug = (key, v) => setL({ ...l, forbrug_aconto: { ...l.forbrug_aconto, [key]: parseNum(v) } })
+  const updForbrug = (key, v) => setL({ ...l, forbrug_aconto: { ...l.forbrug_aconto, [key]: v } })
+  // Afviser serveren datoerne eller beløbene, siges det her — en gemning der ikke
+  // lykkedes må ikke se ud som en der gjorde.
+  const [fejl, setFejl] = useState('')
+  const gem = async () => {
+    try { await onSave(l) } catch (e) { setFejl(e.message); return }
+    setFejl('')
+  }
 
   const aarsleje = (Number(l.maanedlig_leje) || 0) * 12
   const markedsAarsleje = (Number(l.markedsleje_maanedlig_skoen) || 0) * 12
@@ -91,12 +98,12 @@ function LejeForm({ initial, onSave, onCancel, onDelete }) {
         <TextField label="Lejers CPR" hint="valgfrit" value={l.lejer_cpr} onChange={v => upd({ lejer_cpr: v })} placeholder="ddmmåå-xxxx" />
         <TextField label="Startdato" type="date" value={l.startdato} onChange={v => upd({ startdato: v })} />
         <TextField label="Slutdato" hint="valgfrit — åben hvis tom" type="date" value={l.slutdato} onChange={v => upd({ slutdato: v })} />
-        <NumberField label="Månedlig leje" hint="ekskl. forbrug" value={l.maanedlig_leje} onChange={v => upd({ maanedlig_leje: parseNum(v) })} />
-        <NumberField label="Markedsleje pr. måned (skøn)" hint="til gave-/markedsleje-tjek" value={l.markedsleje_maanedlig_skoen} onChange={v => upd({ markedsleje_maanedlig_skoen: parseNum(v) })} />
+        <NumberField label="Månedlig leje" hint="ekskl. forbrug" value={l.maanedlig_leje} onChange={v => upd({ maanedlig_leje: v })} />
+        <NumberField label="Markedsleje pr. måned (skøn)" hint="til gave-/markedsleje-tjek" value={l.markedsleje_maanedlig_skoen} onChange={v => upd({ markedsleje_maanedlig_skoen: v })} />
         <NumberField label="Aconto vand pr. måned" value={l.forbrug_aconto?.vand} onChange={v => updForbrug('vand', v)} />
         <NumberField label="Aconto varme pr. måned" value={l.forbrug_aconto?.varme} onChange={v => updForbrug('varme', v)} />
-        <NumberField label="Depositum" value={l.depositum} onChange={v => upd({ depositum: parseNum(v) })} />
-        <NumberField label="Forudbetalt leje" value={l.forudbetalt_leje} onChange={v => upd({ forudbetalt_leje: parseNum(v) })} />
+        <NumberField label="Depositum" value={l.depositum} onChange={v => upd({ depositum: v })} />
+        <NumberField label="Forudbetalt leje" value={l.forudbetalt_leje} onChange={v => upd({ forudbetalt_leje: v })} />
       </div>
 
       <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
@@ -105,8 +112,9 @@ function LejeForm({ initial, onSave, onCancel, onDelete }) {
       </p>
 
       <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-        <button className="btn primary" onClick={() => onSave(l)}>Gem lejekontrakt</button>
+        <button className="btn primary" onClick={gem}>Gem lejekontrakt</button>
         <button className="btn ghost" onClick={onCancel}>Annullér</button>
+        {fejl && <span className="badge warn" style={{ alignSelf: 'center' }}>{fejl}</span>}
         {onDelete && <button className="btn danger" onClick={onDelete} style={{ marginLeft: 'auto' }}>Slet</button>}
       </div>
     </div>

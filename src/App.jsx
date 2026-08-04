@@ -110,7 +110,7 @@ export default function App() {
           <Bilag years={years} />
         )}
         {loaded && activeTab === 'regnskab' && (
-          <Aarsregnskab years={years} persons={persons} property={property} loans={loans} settings={settings} />
+          <Aarsregnskab years={years} persons={persons} property={property} loans={loans} leases={leases} settings={settings} />
         )}
         {loaded && activeTab === 'indstillinger' && (
           <Indstillinger settings={settings} fieldMappings={fieldMappings} years={years} reload={fetchData} />
