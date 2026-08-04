@@ -148,3 +148,49 @@ test('evalKilde: felt 744 er den samme andel som fradraget er beregnet på', () 
     assert.equal(fradragsBeloeb(saet, 'udgifter', 'vedligeholdelse'), 10000, `andel ${raa}`)
   }
 })
+
+// Editoren prefiller et år med de ARVEDE rækker. Gemmes de uændret, har brugeren ikke
+// verificeret noget — og advarslen om uverificerede feltnumre må ikke kunne slukkes med
+// ét klik på projektets højeste risikopunkt. `rettet` siger hvor rækkerne kom fra,
+// `egetAar` siger om nogen har taget stilling til dem for netop dette år.
+test('en override der er identisk med det arvede tæller ikke som årets egen kilde', () => {
+  const arvet = hentFeltmapping(2027, 'forskud')
+  assert.equal(arvet.kildeAar, 2026)
+  assert.equal(arvet.egetAar, false)
+
+  // Præcis det editoren gemmer, hvis brugeren klikker Gem uden at røre en række.
+  const uaendret = { '2027-forskud': arvet.felter.map(r => ({ ...r })) }
+  const efter = hentFeltmapping(2027, 'forskud', uaendret)
+  assert.equal(efter.rettet, true, 'rækkerne kommer stadig fra brugerens egne overrides')
+  assert.equal(efter.kildeAar, 2026, 'men de er stadig 2026-numre')
+  assert.equal(efter.egetAar, false, 'så advarslen skal blive stående')
+  assert.deepEqual(efter.felter, uaendret['2027-forskud'])
+})
+
+test('en override med ét ændret feltnummer gør året til sin egen kilde', () => {
+  const arvet = hentFeltmapping(2027, 'forskud')
+  const rettede = arvet.felter.map(r => ({ ...r }))
+  rettede[0] = { ...rettede[0], felt_nr: '999' }
+
+  const efter = hentFeltmapping(2027, 'forskud', { '2027-forskud': rettede })
+  assert.equal(efter.egetAar, true)
+  assert.equal(efter.kildeAar, 2027)
+  assert.equal(efter.rettet, true)
+})
+
+test('nøglerækkefølgen i en gemt række afgør ikke om den tæller som ændret', () => {
+  const arvet = hentFeltmapping(2027, 'selvangivelse')
+  // Samme indhold, omvendt nøglerækkefølge — som en håndredigeret DB kunne se ud.
+  const omvendt = arvet.felter.map(r =>
+    Object.fromEntries(Object.keys(r).reverse().map(k => [k, r[k]])))
+  assert.equal(hentFeltmapping(2027, 'selvangivelse', { '2027-selvangivelse': omvendt }).egetAar, false)
+})
+
+test('en override for året med egne defaults er årets egen kilde, uændret eller ej', () => {
+  const eget = hentFeltmapping(2026, 'forskud')
+  assert.equal(eget.egetAar, true)
+  const uaendret = { '2026-forskud': eget.felter.map(r => ({ ...r })) }
+  const efter = hentFeltmapping(2026, 'forskud', uaendret)
+  assert.equal(efter.egetAar, true, '2026 har sin egen mapping — der er intet arvet at falde tilbage til')
+  assert.equal(efter.kildeAar, 2026)
+})

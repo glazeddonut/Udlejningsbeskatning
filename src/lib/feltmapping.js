@@ -86,18 +86,38 @@ export function hentFeltmapping(aar, doktype, overrides = {}) {
   const medHerkomst = (felter, kildeAar, rettet) =>
     ({ aar, felter, kildeAar, egetAar: kildeAar != null && kildeAar === aar, rettet })
 
-  // En override er brugerens egen mapping for præcis dette år — altså årets egen kilde.
-  const key = `${aar}-${doktype}`
-  if (overrides[key]?.length) return medHerkomst(overrides[key], aar, true)
+  const under = defaultFeltmapping(aar, doktype)   // hvad året ville arve uden rettelser
 
-  if (DEFAULT_FELTMAPPING[aar]?.[doktype]) return medHerkomst(DEFAULT_FELTMAPPING[aar][doktype], aar, false)
+  const override = overrides[`${aar}-${doktype}`]
+  if (override?.length) {
+    // En override tæller først som ÅRETS EGEN kilde, når den faktisk afviger fra det
+    // arvede. Editoren prefiller nemlig med de arvede rækker, så et enkelt klik på
+    // "Gem feltnumre" ville ellers kunne slukke advarslen for et år, uden at ét eneste
+    // feltnummer var verificeret mod skat.dk. `rettet` siger hvor bytesene kom fra;
+    // `egetAar` siger om nogen har taget stilling til dem for netop dette år.
+    const uaendret = under.kildeAar !== aar && sammeFelter(override, under.felter)
+    return medHerkomst(override, uaendret ? under.kildeAar : aar, true)
+  }
+  return medHerkomst(under.felter, under.kildeAar, false)
+}
 
+// Defaults for året, ellers nærmeste tidligere definerede år, ellers det ældste.
+// `kildeAar: null` er "ingen kilde overhovedet", ikke et år.
+function defaultFeltmapping(aar, doktype) {
+  if (DEFAULT_FELTMAPPING[aar]?.[doktype]) return { felter: DEFAULT_FELTMAPPING[aar][doktype], kildeAar: aar }
   const aarKeys = Object.keys(DEFAULT_FELTMAPPING).map(Number).sort((a, b) => a - b)
   const tidligere = aarKeys.filter(y => y <= aar).sort((a, b) => b - a)
   const kandidat = tidligere[0] ?? aarKeys[0]   // foretræk ≤ aar, ellers ældste definerede
   const arvet = kandidat != null ? DEFAULT_FELTMAPPING[kandidat]?.[doktype] : null
-  // Findes der slet ingen rækker, siges det — `kildeAar: null` er "ingen kilde", ikke et år.
-  return arvet ? medHerkomst(arvet, kandidat, false) : medHerkomst([], null, false)
+  return arvet ? { felter: arvet, kildeAar: kandidat } : { felter: [], kildeAar: null }
+}
+
+// Er to sæt feltrækker indholdsmæssigt ens? Nøglerækkefølge må ikke afgøre det —
+// editoren kopierer rækkerne med spread, men en håndredigeret DB kan se anderledes ud.
+function sammeFelter(a, b) {
+  if (a.length !== b.length) return false
+  const kanonisk = (r) => JSON.stringify(Object.keys(r).sort().map(k => [k, r[k]]))
+  return a.every((r, i) => kanonisk(r) === kanonisk(b[i]))
 }
 
 // Personens rolle i feltmappingen: den beskattede får 'beskattet'-felter, den anden
