@@ -352,8 +352,9 @@ antagelse om at VSO ikke giver nogen rentefordel her.
   2026.01) — skemaet for indkomståret 2026 er endnu ikke udgivet pr. 2. august 2026.
 - Rubrik 71, 141 og 147 er uændrede over indkomstårene 2020, 2023, 2024 og 2025 (kontrolleret
   direkte i de fire blanketter). Risikoen for at de ændrer sig til 2026 vurderes som lav, men
-  appens `feltmapping_aar: 2026` bør genkontrolleres når 2026-blanketten udkommer (typisk
-  januar 2027).
+  appens feltmapping for 2026 bør genkontrolleres når 2026-blanketten udkommer (typisk
+  januar 2027). (Rettet: stod tidligere som indstillingen `feltmapping_aar: 2026`, der er
+  fjernet — feltmappingen slås op på det år brugeren står i.)
 - Den juridiske vejledning er tjekket i version **2026-2** (gældende fra 31.07.2026).
 - SLUT-vejledning Bilag B er kun offentliggjort i fuld udgave for **indkomståret 2021**; for
   2022–2025 udgives kun delta-dokumenter over nye/ændrede/udgåede felter. Felt 184 optræder ikke

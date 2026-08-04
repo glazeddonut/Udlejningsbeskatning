@@ -282,11 +282,10 @@ test('et gemt bilag med en ukendt post kan gemmes igen', () => {
 // ── Indstillinger (PUT /api/settings) ─────────────────────────────────────────
 
 test('indstillingernes tal accepteres og afvises på samme regel', () => {
-  const s = { feltmapping_aar: 2026, gaveafgift_bundgraense: 76900, markedsleje_advarsel_pct: 5, beskattet_person_id: null }
+  const s = { gaveafgift_bundgraense: 76900, markedsleje_advarsel_pct: 5, beskattet_person_id: null }
   assert.deepEqual(validerIndstillinger(s), { ok: true, begrundelse: '' })
   assert.match(validerIndstillinger({ ...s, gaveafgift_bundgraense: 'ingen' }).begrundelse, /bundgrænse/i)
   assert.match(validerIndstillinger({ ...s, markedsleje_advarsel_pct: 150 }).begrundelse, /markedsleje/i)
-  assert.match(validerIndstillinger({ ...s, feltmapping_aar: 'i år' }).begrundelse, /årstal/i)
 })
 
 // ── De data der allerede ligger på disken ─────────────────────────────────────
