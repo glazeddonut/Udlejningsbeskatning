@@ -267,6 +267,26 @@ export function manglerPeriode(saet) {
   return !parseDato(saet?.fra_dato) || !parseDato(saet?.til_dato)
 }
 
+// Regnes mindst ét månedsbeløb op som et helt år, fordi udlejningsperioden mangler?
+//
+// `prorataMaaneder` falder med vilje tilbage til hele året uden periode — modsat
+// dagstallene, som svarer 0 (ADR-0002). Forskellen er, at et dagstal ER den værdi der
+// indberettes og derfor kan erstattes af tekst, mens pro rata er en faktor på et beløb
+// brugeren selv har tastet: svarede den 0, forsvandt huslejen tavst ud af resultatet —
+// samme plausible fejl, blot i kroner i stedet for dage.
+//
+// Prisen er en antagelse ingen har sagt højt: at månedsbeløbene løb hele året. Den er
+// sand for regnestykket og som regel forkert i virkeligheden. Derfor dette flag: de
+// resultatfelter der bygger på antagelsen markeres, og deres kopiér-knap fjernes, så
+// tallet ikke kan gå ét klik til skat.dk uden at antagelsen er set (issue #16).
+//
+// Er INTET markeret pro rata, ændrer den manglende periode ikke et eneste beløb, og så
+// skal der heller ikke advares — en advarsel der lyser uden grund, læres der at ignorere.
+export function proRataUdenPeriode(saet) {
+  if (!manglerPeriode(saet)) return false
+  return Object.values(saet?.prorata || {}).some(Boolean)
+}
+
 // Antal udlejningsdage efter SKATs 30/360-konvention: en kalendermåned regnes som
 // 30 dage og indkomståret som 360 dage. Det er den konvention fodnoten på felt 748
 // (forskud) og rubrik 207 (årsopgørelse) foreskriver — se CLAUDE.md.

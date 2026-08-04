@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../lib/api.js'
 import { tal, pct, daNum } from '../lib/format.js'
 import { normaliserSaet } from '../lib/saet.js'
-import { personOpgoerelse, resolveFordeling, manglerPeriode } from '../lib/beregning.js'
+import { personOpgoerelse, resolveFordeling, manglerPeriode, proRataUdenPeriode } from '../lib/beregning.js'
 import { hentFeltmapping, evalKilde, feltRolle, felterForRolle } from '../lib/feltmapping.js'
 
 const DOKTYPER = [
@@ -40,6 +40,9 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
   // og det skal stå på fladen, ikke ske tavst.
   const mapping = hentFeltmapping(valgtAar, doktype, fieldMappings)
   const felter = mapping.felter
+  // Mangler perioden, og er noget markeret "pr. måned", hviler resultatet på en antagelse
+  // om et helt år. Se proRataUdenPeriode og issue #16.
+  const helAarsAntagelse = saet ? proRataUdenPeriode(saet) : false
 
   // Sortér så den beskattede vises først (som "Indberetter 2" hos Reportability).
   const opgSorteret = [...opg].sort((a, b) => (b.erBeskattet ? 1 : 0) - (a.erBeskattet ? 1 : 0))
@@ -153,6 +156,12 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
                   // Resultatfelter (overskud/underskud) indberettes som positivt beløb.
                   const vist = f.kilde === 'resultat' ? Math.abs(raw) : raw
                   const { vis, kopi } = visVaerdi(vist, f.enhed)
+                  // Resultatet hviler på en antagelse ingen har sagt højt, når perioden
+                  // mangler: at månedsbeløbene løb hele året. Tallet er ikke forkert
+                  // regnet — det er rigtigt UNDER antagelsen — så det bliver stående.
+                  // Men antagelsen skrives på rækken, og kopiér-knappen fjernes, så et
+                  // tal ingen har taget stilling til ikke kan gå ét klik til skat.dk.
+                  const paaAntagelse = f.kilde === 'resultat' && helAarsAntagelse
                   return (
                     <tr key={i}>
                       <td>
@@ -162,9 +171,16 @@ export default function SkatteIndberetning({ years, persons, property, loans, fi
                       <td>
                         {f.label}
                         {f.note && <div className="muted" style={{ fontSize: 12 }}>{f.note}</div>}
+                        {paaAntagelse && (
+                          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                            <span className="badge warn" style={{ marginRight: 6, fontSize: 11 }}>regnet som et helt år</span>
+                            Udlejningsperioden mangler, så beløb tastet “pr. måned” er ganget med tolv.
+                            Udfyld fra- og til-dato under “Årets tal”, før du indberetter dette tal.
+                          </div>
+                        )}
                       </td>
                       <td className="num">{kopi === null ? <span className="badge warn">{vis}</span> : vis}</td>
-                      <td>{kopi !== null && (f.enhed === 'kr' || f.enhed === 'dage' || f.enhed === '%') ? <KopiKnap tekst={kopi} /> : null}</td>
+                      <td>{kopi !== null && !paaAntagelse && (f.enhed === 'kr' || f.enhed === 'dage' || f.enhed === '%') ? <KopiKnap tekst={kopi} /> : null}</td>
                     </tr>
                   )
                 })}
