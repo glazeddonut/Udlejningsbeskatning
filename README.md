@@ -27,7 +27,8 @@ fordeles forholdsmæssigt efter dage (delår som fx lejestart 5. august håndter
   Filen er git-ignored og indeholder personlige data (CPR m.m.) — committes aldrig.
 - **Bilag:** uploadede kvitteringer gemmes på disk i `BILAG_DIR` (default `./bilag`, git-ignored).
 - **PDF:** regnskabs-PDF genereres med [pdf-lib](https://pdf-lib.js.org/) i browseren.
-- **Tests:** `npm test` (rene regnetests i `src/lib/`).
+- **Tests:** `npm test` (rene regnetests i `src/lib/`, plus `server.test.js` der kører
+  API'et i processen mod en midlertidig database).
 
 ## Kør lokalt
 

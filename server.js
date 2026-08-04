@@ -1,6 +1,6 @@
 import express from 'express'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join, extname } from 'path'
 import { bilagForAar, medBilagsnumre, migrerBilag } from './src/lib/bilag.js'
 import { maaAarOprettes, saetTilNytAar } from './src/lib/beregning.js'
@@ -391,5 +391,13 @@ app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'))
 })
 
-const PORT = process.env.PORT || 3002
-app.listen(PORT, () => console.log(`Udlejningsbeskatning kører på http://localhost:${PORT}`))
+// Appen eksporteres, så den kan køres i processen af en test (server.test.js) og
+// spørges gennem de samme døre som enhver anden klient. Porten bindes kun når filen
+// køres som program — `npm start` og `npm run dev:server` er uændrede; en import
+// giver en Express-app der ikke lytter på noget.
+export { app }
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  const PORT = process.env.PORT || 3002
+  app.listen(PORT, () => console.log(`Udlejningsbeskatning kører på http://localhost:${PORT}`))
+}
