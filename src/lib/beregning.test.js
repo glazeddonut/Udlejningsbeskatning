@@ -8,7 +8,7 @@ import {
   periodeForAar, prorataMaaneder, leaseForAar, udlejningsdage360,
   aarsgrundlag, periodeAfvigelse, periodeKvittering, gruppeOpgoerelse, manglerPeriode,
   udlejetAndel, fradragsBeloeb, aarsinterval, maaAarOprettes, prefillSaet, saetTilNytAar,
-  renteskoen,
+  renteskoen, proRataUdenPeriode,
 } from './beregning.js'
 
 // Fælles testopsætning: to ægtefæller 50/50, ét realkreditlån 50/50 hæftelse.
@@ -1048,4 +1048,55 @@ test('saetTilNytAar: en indtastet rente overskrives aldrig af et skøn', () => {
 test('renteskoen: et årstal som tekst regnes som det år det er', () => {
   const laan = { restgaeld: 1500000, rente_pct: 3, startdato: '2025-08-09' }
   assert.deepEqual(renteskoen(laan, '2025'), renteskoen(laan, 2025))
+})
+
+// ── Antagelsen om et helt år, når perioden mangler (issue #16) ────────────────
+//
+// prorataMaaneder falder med vilje tilbage til hele året uden periode, modsat
+// dagstallene der svarer 0. Prisen er en antagelse ingen har sagt højt. Flaget
+// findes for at kunne sige den — men kun når den faktisk ændrer et beløb.
+
+test('proRataUdenPeriode: fyrer når perioden mangler og noget er markeret pr. måned', () => {
+  const saet = {
+    fra_dato: '', til_dato: '',
+    indtaegter: { leje: 4500 },
+    prorata: { 'indtaegter.leje': true },
+  }
+  assert.equal(proRataUdenPeriode(saet), true)
+  // og beløbet ER faktisk ganget op — det er dét antagelsen består i
+  assert.equal(effektivBeloeb(saet, 'indtaegter', 'leje'), 4500 * 12)
+})
+
+test('proRataUdenPeriode: tier når perioden findes', () => {
+  const saet = {
+    fra_dato: '2025-08-06', til_dato: '2025-12-31',
+    indtaegter: { leje: 4500 },
+    prorata: { 'indtaegter.leje': true },
+  }
+  assert.equal(proRataUdenPeriode(saet), false)
+})
+
+test('proRataUdenPeriode: tier når intet er markeret pr. måned', () => {
+  // Uden pro rata ændrer den manglende periode ikke ét eneste beløb, og en advarsel
+  // ville være falsk alarm. En advarsel der lyser uden grund, læres der at ignorere.
+  const saet = { fra_dato: '', til_dato: '', indtaegter: { leje: 54000 }, prorata: {} }
+  assert.equal(proRataUdenPeriode(saet), false)
+  assert.equal(effektivBeloeb(saet, 'indtaegter', 'leje'), 54000)
+})
+
+test('proRataUdenPeriode: en afkrydsning slået FRA tæller ikke', () => {
+  const saet = { fra_dato: '', til_dato: '', prorata: { 'indtaegter.leje': false } }
+  assert.equal(proRataUdenPeriode(saet), false)
+})
+
+test('proRataUdenPeriode: halv periode er lige så uoplyst som ingen', () => {
+  const kun_fra = { fra_dato: '2025-08-06', til_dato: '', prorata: { 'indtaegter.leje': true } }
+  const kun_til = { fra_dato: '', til_dato: '2025-12-31', prorata: { 'indtaegter.leje': true } }
+  assert.equal(proRataUdenPeriode(kun_fra), true)
+  assert.equal(proRataUdenPeriode(kun_til), true)
+})
+
+test('proRataUdenPeriode: et tomt talsæt fyrer ikke — der er intet beløb at tage fejl af', () => {
+  assert.equal(proRataUdenPeriode({}), false)
+  assert.equal(proRataUdenPeriode(null), false)
 })
