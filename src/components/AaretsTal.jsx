@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, kr, daNum, pct } from '../lib/format.js'
+import { kr, pct } from '../lib/format.js'
 import { NumberField, TextField } from './fields.jsx'
 import {
   sumIndtaegter, sumFradragsUdgifter, resultatFoerRenter,
@@ -84,12 +84,14 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     reload()
   }
 
+  // Værdien gemmes som den kommer ind: talfeltet leverer et tal (eller null for et tomt
+  // felt), datofeltet en ISO-dato. Feltet kender sin egen form, så der er ikke længere
+  // en liste af nøgler her der skal huske hvilke der ikke må parses.
   const setField = (path, key, v) => {
     setYear(prev => {
       const saet = { ...prev[mode] }
-      if (path) saet[path] = { ...saet[path], [key]: parseNum(v) }
-      else if (key === 'naertstaaende' || key === 'fra_dato' || key === 'til_dato') saet[key] = v
-      else saet[key] = parseNum(v)
+      if (path) saet[path] = { ...saet[path], [key]: v }
+      else saet[key] = v
       return { ...prev, [mode]: saet }
     })
     setDirty(true)
@@ -106,10 +108,12 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
     setYear(prev => ({ ...prev, [mode]: { ...prev[mode], periode_kvittering: k } }))
     setDirty(true)
   }
+  // Renten kommer enten fra talfeltet (et tal) eller fra knappen “Beregn fra stamdata”
+  // (renteskønnets tal). Begge er tal i forvejen og gemmes som de er.
   const setRente = (loanId, v) => {
     setYear(prev => ({
       ...prev,
-      [mode]: { ...prev[mode], renteudgifter: { ...prev[mode].renteudgifter, [loanId]: parseNum(v) } },
+      [mode]: { ...prev[mode], renteudgifter: { ...prev[mode].renteudgifter, [loanId]: v } },
     }))
     setDirty(true)
   }
@@ -223,6 +227,10 @@ export default function AaretsTal({ years, persons, property, loans, leases, set
 
 // Ét beløbsfelt for én post i kontoplanen. Posten leverer label og hint, så
 // indtastningen bruger samme navne som regnskabet.
+//
+// Feltet er en VARIANT af talfeltet, ikke en kopi af det: pro rata-afkrydsningen sidder
+// i labelens højre side, og de to forklaringer under feltet er dets børn. Den rå tekst,
+// decimalkommaet og parsningen hører hjemme ét sted — i talfeltet selv.
 function BeloebFelt({ post, saet, setField, setProrata }) {
   const { gruppe, noegle, label, hint } = post
   const pro = erProrata(saet, gruppe, noegle)
@@ -233,37 +241,33 @@ function BeloebFelt({ post, saet, setField, setProrata }) {
   // netop dette beløb ned — så feltet, kassen nedenfor og regnskabet ikke kan komme til
   // at være uenige om hvilke poster der er ramt.
   const andelPct = udlejetAndel(saet)
-  const raw = saet[gruppe]?.[noegle] ?? 0
-  const [text, setText] = useState(() => (raw ? daNum(raw) : ''))
-  const [focus, setFocus] = useState(false)
-  useEffect(() => { if (!focus) setText(raw ? daNum(raw) : '') }, [raw, focus])
   return (
-    <div className="field">
-      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span>{label} {hint && <span className="hint">· {hint}</span>}</span>
+    <NumberField
+      label={label}
+      hint={hint}
+      suffix={pro ? 'kr./md' : 'kr.'}
+      // `|| ''` og ikke `?? ''`: HER er 0 kr. og intet beløb det samme tal — begge læses
+      // som 0 af summeringen — så et 0 vises som et tomt felt frem for som et ciffer
+      // brugeren skal slette først. Talsættet fødes med 0 på hver eneste post
+      // (tomtSaet), og et kort fyldt med nuller ville skjule hvad der faktisk er tastet.
+      // Modstykket er den udlejede andel nedenfor, hvor 0 % og uoplyst IKKE er samme tal
+      // (ADR-0008); den bruger derfor `??`.
+      value={saet[gruppe]?.[noegle] || ''}
+      onChange={v => setField(gruppe, noegle, v)}
+      labelExtra={
         <span className="hint" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer', fontWeight: 400 }}>
           <input type="checkbox" checked={pro} onChange={e => setProrata(gruppe, noegle, e.target.checked)} style={{ width: 'auto', margin: 0 }} />
           pr. måned
         </span>
-      </label>
-      <div className="input-suffix">
-        <input
-          type="text" inputMode="decimal"
-          value={text}
-          onChange={e => { setText(e.target.value); setField(gruppe, noegle, e.target.value) }}
-          onFocus={() => setFocus(true)}
-          onBlur={() => setFocus(false)}
-          style={{ paddingRight: 54 }}
-        />
-        <span className="suffix">{pro ? 'kr./md' : 'kr.'}</span>
-      </div>
+      }
+    >
       {pro && <span className="hint">= {kr(effektivBeloeb(saet, gruppe, noegle))} for perioden</span>}
       {post.andel && (
         <span className="hint">
           ejendomspost · fradrag {kr(post.beloeb)} ved {pct(andelPct)} udlejet andel
         </span>
       )}
-    </div>
+    </NumberField>
   )
 }
 

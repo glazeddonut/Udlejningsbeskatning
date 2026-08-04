@@ -29,17 +29,31 @@ export function pct(n) {
   return (Number(n) || 0).toLocaleString('da-DK', { maximumFractionDigits: 2 }) + ' %'
 }
 
-// Parse et indtastet felt til et tal (tåler tomme felter og danske tusindtalsseparatorer).
+// En indtastning som VÆRDI: tallet der står i den, eller `null` når indtastningen ikke
+// bærer et tal — hverken tom eller tegn der ikke danner et tal ("-", ",", "fem tusind").
 // Dansk konvention: komma = decimal, punktum = tusindtalsseparator.
-export function parseNum(s) {
-  if (s === '' || s === null || s === undefined) return 0
-  const cleaned = String(s).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '')
-  const n = parseFloat(cleaned)
-  return Number.isFinite(n) ? n : 0
+//
+// (Navnet siger "indtastet", ikke "felt": et felt er i dette projekt et NUMMERERET felt
+// på skat.dk, og de to må ikke kunne forveksles — se CONTEXT.md, Feltmapping.)
+//
+// TOMT ER IKKE NUL. En tom indtastning er uoplyst, og de to er ikke det samme overalt: en
+// tom udlejet andel læses som fuld udlejning (udlejetAndel), mens 0 % er en rigtig andel
+// der nulstiller ejendomsposternes fradrag. Leverede et tomt felt 0, ville det at rydde
+// det tavst skære hvert ejendomsfradrag væk — og den andel indberettes til SKAT (ADR-0008).
+// For beløb ændrer valget intet: beregningslaget læser gennemgående `Number(v) || 0`,
+// så et uoplyst beløb fortsat er 0 kr. Valideringen (validering.js) behandler ligeledes
+// `null` som uoplyst, ikke som en fejl.
+//
+// Det er talfeltet (NumberField) der kalder den, ét sted — kaldestederne parser ikke selv.
+export function indtastetTal(s) {
+  if (s === '' || s === null || s === undefined) return null
+  const renset = String(s).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '')
+  const n = parseFloat(renset)
+  return Number.isFinite(n) ? n : null
 }
 
 // Tal → redigerbar tekst med dansk decimalkomma (uden tusindtalsseparator),
-// så det kan re-parses korrekt af parseNum. Tomt/0-håndteres af kalderen.
+// så det kan re-parses korrekt af indtastetTal. Tomt/0-håndteres af kalderen.
 export function daNum(v) {
   if (v === '' || v === null || v === undefined || isNaN(Number(v))) return ''
   return Number(v).toLocaleString('da-DK', { useGrouping: false, maximumFractionDigits: 2 })

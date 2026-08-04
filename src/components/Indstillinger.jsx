@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum } from '../lib/format.js'
 import { NumberField } from './fields.jsx'
 import { DEFAULT_FELTMAPPING, hentFeltmapping } from '../lib/feltmapping.js'
 
@@ -37,8 +36,8 @@ export default function Indstillinger({ settings, fieldMappings, years, reload }
               Skatteindberetningen slår altid op på det valgte år og skriver selv hvilket års
               feltnumre tallene blev oversat med. Indstillingen kunne kun komme til at pege et
               andet sted hen end det der faktisk blev brugt. Genindsæt den ikke. */}
-          <NumberField label="Gaveafgift, bundgrænse pr. giver" hint="VERIFICÉR pr. år" value={s.gaveafgift_bundgraense} onChange={v => upd({ gaveafgift_bundgraense: parseNum(v) })} />
-          <NumberField label="Markedsleje-advarsel" hint="advar hvis leje er mere end X % under markedsleje" value={s.markedsleje_advarsel_pct} onChange={v => upd({ markedsleje_advarsel_pct: parseNum(v) })} suffix="%" />
+          <NumberField label="Gaveafgift, bundgrænse pr. giver" hint="VERIFICÉR pr. år" value={s.gaveafgift_bundgraense} onChange={v => upd({ gaveafgift_bundgraense: v })} />
+          <NumberField label="Markedsleje-advarsel" hint="advar hvis leje er mere end X % under markedsleje" value={s.markedsleje_advarsel_pct} onChange={v => upd({ markedsleje_advarsel_pct: v })} suffix="%" />
         </div>
         <div style={{ marginTop: 12 }}>
           <button className="btn primary" onClick={gem} disabled={!dirty}>Gem indstillinger</button>

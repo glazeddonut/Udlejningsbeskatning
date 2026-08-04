@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api.js'
 import { bilagForAar, bilagPost } from '../lib/bilag.js'
 import { KONTOPLAN, posterIGruppe } from '../lib/kontoplan.js'
-import { kr2, parseNum } from '../lib/format.js'
+import { kr2 } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
 // Postvælgeren bygges af kontoplanen — ikke af en liste her i komponenten. Et bilag og
@@ -134,7 +134,7 @@ function UploadForm({ aar, onDone }) {
         <TextField label="Dato" type="date" value={meta.dato} onChange={v => setMeta({ ...meta, dato: v })} />
         <SelectField label="Post" hint="posten i kontoplanen bilaget dokumenterer" value={meta.post_id} onChange={v => setMeta({ ...meta, post_id: v })} options={POSTER} />
         <TextField label="Tekst / beskrivelse" value={meta.tekst} onChange={v => setMeta({ ...meta, tekst: v })} placeholder="fx VVS-reparation, faktura 1234" />
-        <NumberField label="Beløb" value={meta.beloeb || ''} onChange={v => setMeta({ ...meta, beloeb: parseNum(v) })} />
+        <NumberField label="Beløb" value={meta.beloeb || ''} onChange={v => setMeta({ ...meta, beloeb: v })} />
       </div>
       <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
         <button className="btn primary" onClick={gem} disabled={gemmer || !file}>{gemmer ? 'Uploader…' : 'Tilføj bilag'}</button>

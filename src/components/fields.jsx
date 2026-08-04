@@ -1,6 +1,6 @@
 // Genbrugelige formular-felter. Holder styling og markup ensartet på tværs af faner.
 import { useState, useEffect } from 'react'
-import { daNum } from '../lib/format.js'
+import { daNum, indtastetTal } from '../lib/format.js'
 
 export function TextField({ label, hint, value, onChange, type = 'text', placeholder }) {
   return (
@@ -16,28 +16,48 @@ export function TextField({ label, hint, value, onChange, type = 'text', placeho
   )
 }
 
-// Talfelt med enhed-suffiks (fx "kr.", "%", "dage"). Holder rå tekst under redigering,
-// så decimaler (fx "1250,50") kan tastes uden at blive normaliseret væk ved hvert tastetryk.
-export function NumberField({ label, hint, value, onChange, suffix = 'kr.' }) {
+// Talfelt med enhed-suffiks (fx "kr.", "%", "dage").
+//
+// Feltet holder den rå tekst i sin EGEN state, så decimaler ("1250,50") og halvt tastede
+// tal ("1250,") kan stå i feltet uden at blive normaliseret væk ved hvert tastetryk — men
+// det leverer et TAL ud (indtastetTal). Teksten er feltets egen sag; tallet er kaldestedets.
+// Ellers skulle hvert eneste kaldested huske at parse, og ét glemt kald ville gemme en
+// streng i databasen. Et tomt felt leverer `null` (uoplyst), ikke 0 — se indtastetTal.
+//
+// `labelExtra` er indhold i labelens højre side, og `children` er linjer under feltet.
+// De to slots er grunden til at beløbsfeltet med pro rata-afkrydsning i Årets tal kan
+// være en VARIANT af dette felt frem for en kopi af det.
+export function NumberField({ label, hint, value, onChange, suffix = 'kr.', labelExtra, children }) {
   const [text, setText] = useState(() => daNum(value))
   const [focus, setFocus] = useState(false)
   // Synk fra prop når feltet ikke er i fokus (fanger eksterne ændringer, fx "Kopiér fra budget").
   useEffect(() => { if (!focus) setText(daNum(value)) }, [value, focus])
+  // Teksten bliver stående ordret som den er tastet; kun tallet gives videre.
+  const skriv = (raa) => { setText(raa); onChange(indtastetTal(raa)) }
+  const etiket = <>{label} {hint && <span className="hint">· {hint}</span>}</>
   return (
     <div className="field">
-      {label && <label>{label} {hint && <span className="hint">· {hint}</span>}</label>}
+      {(label || labelExtra) && (labelExtra
+        ? (
+          <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <span>{etiket}</span>
+            {labelExtra}
+          </label>
+        )
+        : <label>{etiket}</label>)}
       <div className="input-suffix">
         <input
           type="text"
           inputMode="decimal"
           value={text}
-          onChange={e => { setText(e.target.value); onChange(e.target.value) }}
+          onChange={e => skriv(e.target.value)}
           onFocus={() => setFocus(true)}
           onBlur={() => setFocus(false)}
           style={{ paddingRight: `${Math.max(42, String(suffix).length * 9 + 22)}px` }}
         />
         <span className="suffix">{suffix}</span>
       </div>
+      {children}
     </div>
   )
 }

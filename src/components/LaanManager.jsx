@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../lib/api.js'
-import { parseNum, kr, pct } from '../lib/format.js'
+import { kr, pct } from '../lib/format.js'
 import { TextField, NumberField, SelectField } from './fields.jsx'
 
 const TYPER = [
@@ -100,7 +100,7 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
     haeftelse: standardHaeftelse(persons),
   })
   const upd = (patch) => setL({ ...l, ...patch })
-  const updHaefte = (pid, v) => setL({ ...l, haeftelse: { ...l.haeftelse, [pid]: parseNum(v) } })
+  const updHaefte = (pid, v) => setL({ ...l, haeftelse: { ...l.haeftelse, [pid]: v } })
   // Serveren afviser et beløb der ikke er et tal, en peildato der ikke er en dato og
   // en hæftelse uden for 0–100 %. Fejlen vises her frem for at gemningen tavst svigter.
   const [fejl, setFejl] = useState('')
@@ -116,11 +116,11 @@ function LaanForm({ initial, persons, onSave, onCancel, onDelete }) {
       <div className="grid">
         <SelectField label="Type" value={l.type} onChange={v => upd({ type: v })} options={TYPER} />
         <TextField label="Långiver" value={l.laangiver} onChange={v => upd({ laangiver: v })} placeholder="fx Totalkredit / Nordea" />
-        <NumberField label="Hovedstol" value={l.hovedstol} onChange={v => upd({ hovedstol: parseNum(v) })} />
+        <NumberField label="Hovedstol" value={l.hovedstol} onChange={v => upd({ hovedstol: v })} />
         <TextField label="Optaget" hint="lånets startdato — skærer renteskønnet til i optagelsesåret" type="date" value={l.startdato || ''} onChange={v => upd({ startdato: v })} />
-        <NumberField label="Restgæld" hint="saldo på peildatoen" value={l.restgaeld} onChange={v => upd({ restgaeld: parseNum(v) })} />
+        <NumberField label="Restgæld" hint="saldo på peildatoen" value={l.restgaeld} onChange={v => upd({ restgaeld: v })} />
         <TextField label="Restgæld pr." hint="peildato (fx bankens 31/12)" type="date" value={l.restgaeld_dato || ''} onChange={v => upd({ restgaeld_dato: v })} />
-        <NumberField label="Rente" value={l.rente_pct} onChange={v => upd({ rente_pct: parseNum(v) })} suffix="%" />
+        <NumberField label="Rente" value={l.rente_pct} onChange={v => upd({ rente_pct: v })} suffix="%" />
       </div>
 
       <div style={{ marginTop: 14 }}>

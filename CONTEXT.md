@@ -51,6 +51,14 @@ _Undgå_: datasæt, årsdata
 Hvilket af årets to talsæt der er tale om: **budget** (til forskudsopgørelsen, fremadrettet)
 eller **faktisk** (til selvangivelsen, bagudrettet).
 
+**Uoplyst**:
+En værdi ingen har taget stilling til — et tomt felt, ikke tallet nul. For beløb er de to
+det samme tal (0 kr.), men ikke overalt: en uoplyst udlejet andel betyder fuld udlejning,
+mens 0 % er en rigtig andel der nulstiller ejendomsposternes fradrag. Et talfelt leverer
+derfor `null` for en tom indtastning, og skrivningen afviser det ikke — en halvfærdig
+indtastning skal kunne gemmes (ADR-0008).
+_Undgå_: tom, nul, manglende
+
 **Udlejningsperiode**:
 Fra- og til-dato for udlejningen inden for ét skatteår. Udledes af lejekontrakten, men
 kan overstyres bevidst — fx når den faktiske indflytning afviger fra kontraktens start.
