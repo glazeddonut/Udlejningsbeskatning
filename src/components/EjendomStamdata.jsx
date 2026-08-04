@@ -52,7 +52,7 @@ export default function EjendomStamdata({ property, persons, reload }) {
       </div>
 
       <div className="grid">
-        <TextField label="Navn / kaldenavn" value={e.navn} onChange={v => upd({ navn: v })} placeholder="fx Dronning Margrethes Vej 3" />
+        <TextField label="Navn / kaldenavn" value={e.navn} onChange={v => upd({ navn: v })} placeholder="fx Bøgevej 12, 2. th" />
         <TextField label="Adresse" value={e.adresse} onChange={v => upd({ adresse: v })} />
         <SelectField label="Type" value={e.type} onChange={v => upd({ type: v })} options={TYPER} />
         <TextField label="Købsdato" type="date" value={e.koebsdato} onChange={v => upd({ koebsdato: v })} />

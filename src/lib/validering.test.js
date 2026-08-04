@@ -190,7 +190,7 @@ test('et nyt år kan ikke fødes med en hjemløs post', () => {
 
 test('ejendommens tal og købsdato accepteres når de er tal og datoer', () => {
   const ejendom = {
-    navn: 'Dronning Margrethes Vej 3', type: 'ejerlejlighed', koebsdato: '2025-08-01',
+    navn: 'Bøgevej 12, 2. th', type: 'ejerlejlighed', koebsdato: '2025-08-01',
     anskaffelsessum: 2601850, forbedringer_foer_udlejning: 0, grundskyld_aarlig: 3000,
     ejerandele: { 1: 50, 2: 50 },
   }
@@ -210,7 +210,7 @@ test('ejendommens beløb, købsdato og ejerandele afvises når de ikke har domæ
 
 test('et lån med tal, peildato og hæftelse accepteres', () => {
   const laan = {
-    type: 'bank', laangiver: 'Danske Bank', hovedstol: 1500000, restgaeld: 1500000,
+    type: 'bank', laangiver: 'Eksempelbanken', hovedstol: 1500000, restgaeld: 1500000,
     restgaeld_dato: '2026-12-31', rente_pct: 3, haeftelse: { 1: 50, 2: 50 },
   }
   assert.deepEqual(validerLaan(laan), { ok: true, begrundelse: '' })
@@ -234,7 +234,7 @@ test('lånets beløb, rente, datoer og hæftelse afvises når de ikke har domæn
 
 test('en lejekontrakt med datoer og beløb accepteres — også med åben slutdato', () => {
   const lease = {
-    lejer_navn: 'Mathilde', startdato: '2026-01-01', slutdato: '',
+    lejer_navn: 'Lejer', startdato: '2026-01-01', slutdato: '',
     maanedlig_leje: 6000, forbrug_aconto: { vand: 300, varme: 300 },
     depositum: 0, forudbetalt_leje: 0, markedsleje_maanedlig_skoen: 4500,
   }

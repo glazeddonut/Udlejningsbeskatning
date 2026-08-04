@@ -16,11 +16,11 @@ const db = (over = {}) => ({
     { id: 2, navn: 'Thomas', cpr: '', rolle: 'medejer' },
   ],
   property: {
-    navn: 'Dronning Margrethes Vej 3',
-    adresse: 'Dronning Margrethes Vej 3',
+    navn: 'Bøgevej 12, 2. th',
+    adresse: 'Bøgevej 12, 2. th',
     ejerandele: { 1: 50, 2: 50 },
   },
-  loans: [{ id: 1, laangiver: 'Danske Bank', restgaeld: 1500000, rente_pct: 3, haeftelse: { 1: 50, 2: 50 } }],
+  loans: [{ id: 1, laangiver: 'Eksempelbanken', restgaeld: 1500000, rente_pct: 3, haeftelse: { 1: 50, 2: 50 } }],
   leases: [{ id: 1, startdato: '2025-08-05', slutdato: '2025-12-31', maanedlig_leje: 4500, forbrug_aconto: { vand: 300, varme: 300 } }],
   settings: { fordeling_mode: 'alt_paa_en', beskattet_person_id: null },
   years: [{ id: 8, aar: 2025, budget: raatSaet(), faktisk: raatSaet() }],
@@ -169,7 +169,7 @@ test('opstillingens hoved er det samme tekststykke til begge flader', () => {
   const h = kald().opstilling.hoved
   assert.equal(h.overskrift, 'Regnskab for udlejning · 2025')
   assert.deepEqual(h.linjer, [
-    'Dronning Margrethes Vej 3, Dronning Margrethes Vej 3',
+    'Bøgevej 12, 2. th, Bøgevej 12, 2. th',
     'Ejere: Nanna (50 %) · Thomas (50 %)',
     'Grundlag: faktiske tal · Udlejet til nærtstående: ja · 148 udlejningsdage',
   ])
