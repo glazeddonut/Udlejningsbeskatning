@@ -23,7 +23,7 @@ genererer et **årsregnskab som PDF (med bilag)**.
 - **Dev:** `npm run dev` → Vite på **5174** (hot-reload) + Express på **3002**.
   Vite proxyer `/api` til 3002. (Portene valgt for ikke at kollidere med
   FormueFremskrivning på 5173/3001.)
-- **Test:** `npm test` (node --test; 285 tests). De rene regnetests ligger i
+- **Test:** `npm test` (node --test; 294 tests). De rene regnetests ligger i
   `src/lib/*.test.js`; `server.test.js` kører Express-appen i processen mod en
   midlertidig DB-fil og fastholder at hvert skriveendepunkt kalder sin validator
   (server.js eksporterer derfor `app` og binder først porten når filen køres som
