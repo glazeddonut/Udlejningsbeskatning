@@ -8,12 +8,16 @@ services:
       # Vært:Container — ram appen på http://<server-ip>:3002
       - "3002:3002"
     volumes:
-      # Persistér databasen på værten, så data overlever container-genstart/opdatering
+      # Persistér database OG bilagsfiler på værten, så data overlever
+      # container-genstart/opdatering. Begge stier peger ind i /data nedenfor.
       - udlejning-data:/data
     environment:
       - NODE_ENV=production
       - PORT=3002
+      # Disse to gentager Dockerfilens defaults. De står her, fordi de hører sammen:
+      # nævnes kun den ene, ser det ud som om bilagene ikke bliver persisteret.
       - DB_PATH=/data/udlejning-data.json
+      - BILAG_DIR=/data/bilag
 
 volumes:
   udlejning-data:
